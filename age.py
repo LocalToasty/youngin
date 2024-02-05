@@ -19,7 +19,7 @@ from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
-__all__ = ["AgeFile", "HeaderKey", "X25519Key", "ScryptKey"]
+__all__ = ["ReadAgeFile", "HeaderKey", "X25519Key", "ScryptKey"]
 
 
 @dataclass
@@ -87,7 +87,7 @@ class X25519Key:
         if magic.startswith(b"age-encryption.org/v1"):
             if not keys:
                 raise RuntimeError("no age key to decrypt keyfile supplied")
-            file = AgeFile(file, keys)
+            file = ReadAgeFile(file, keys)
 
         return [
             cls.from_age_secret_key(line.strip().decode())
@@ -137,20 +137,25 @@ TAG_SIZE = 16
 ENCRYPTED_CHUNK_SIZE = DATA_CHUNK_SIZE + TAG_SIZE
 
 
-class AgeFile(io.BufferedIOBase):
+class ReadAgeFile(io.BufferedIOBase):
     def __init__(
         self,
         file: RawIOBase | Path | str,
         keys: Iterable[HeaderKey],
     ) -> None:
         if isinstance(file, (Path, str)):
-            file = open(file, "rb")
+            self._fileobj = open(file, "rb")
+        else:
+            self._fileobj = file
 
-        file.seek(0)
-        stanzas, header_lines, header_hmac = _parse_header(file)
+        if self._fileobj.seekable():
+            self._fileobj.seek(0)
+
+        stanzas, header_lines, header_hmac = _parse_header(self._fileobj)
 
         # Find a matching stanza
         for stanza in stanzas:
+            file_key = None
             for key in keys:
                 file_key = key.decode(stanza)
                 if file_key:
@@ -164,7 +169,7 @@ class AgeFile(io.BufferedIOBase):
             file_key=file_key, header_lines=header_lines, header_hmac=header_hmac
         )
 
-        payload_key_nonce = file.read(16)
+        payload_key_nonce = self._fileobj.read(16)
         payload_hkdf = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
@@ -175,36 +180,39 @@ class AgeFile(io.BufferedIOBase):
         payload_key = payload_hkdf.derive(file_key)
         self._payload_chacha = ChaCha20Poly1305(payload_key)
 
-        self.fileobj = file
-
         self._off = 0
         self._counter = 0
         self._buf = b""
+        self._next_encrypted_chunk = b""
+        self._eof = False
 
-        self.payload_start = file.tell()
-        file_len = self.fileobj.seek(0, 2)
-        self.no_chunks = (
-            file_len - self.payload_start + ENCRYPTED_CHUNK_SIZE - 1
-        ) // ENCRYPTED_CHUNK_SIZE  # rounded up integer division
-        self.cleartext_len = file_len - self.payload_start - TAG_SIZE * self.no_chunks
+        if self._fileobj.seekable():
+            self._payload_start = self._fileobj.tell()
 
-        self.fileobj.seek(self.payload_start)
+            self._file_len = self._fileobj.seek(0, 2)
+            no_chunks = (
+                self._file_len - self._payload_start + ENCRYPTED_CHUNK_SIZE - 1
+            ) // ENCRYPTED_CHUNK_SIZE  # rounded up integer division
+            self._cleartext_len = (
+                self._file_len - self._payload_start - TAG_SIZE * no_chunks
+            )
 
+            self.seek(0)
 
     def close(self) -> None:
         # Delete all attributes which may contain sensitive data
         del self._payload_chacha, self._buf, self._off, self._counter
 
-        return self.fileobj.close()
+        return self._fileobj.close()
 
     @property
     def closed(self):
-        return self.fileobj.closed
+        return self._fileobj.closed
 
     def seekable(self) -> bool:
         if self.closed:
             raise ValueError("I/O operation on closed file.")
-        return self.fileobj.seekable()
+        return self._fileobj.seekable()
 
     def seek(self, offset: int, whence: int = 0) -> int:
         if self.closed:
@@ -212,74 +220,114 @@ class AgeFile(io.BufferedIOBase):
 
         if whence == 0:
             # Seek from start of file
-            counter = offset // DATA_CHUNK_SIZE
+            self._counter = offset // DATA_CHUNK_SIZE
             off = offset % DATA_CHUNK_SIZE
         elif whence == 1:
             # Seek from current position
-            counter = self._counter + offset // DATA_CHUNK_SIZE
+            self._counter = self._counter + offset // DATA_CHUNK_SIZE
             off = (self._off + offset) % DATA_CHUNK_SIZE
         elif whence == 2:
             # Seek from end of file
-            counter = (self.cleartext_len + offset) // DATA_CHUNK_SIZE
-            off = (self.cleartext_len + offset) % DATA_CHUNK_SIZE
+            self._counter = (self._cleartext_len + offset) // DATA_CHUNK_SIZE
+            off = (self._cleartext_len + offset) % DATA_CHUNK_SIZE
         else:
             raise NotImplementedError()
 
-        self.fileobj.seek(self.payload_start + counter * ENCRYPTED_CHUNK_SIZE)
-        self._buf, self._counter, self._off = b"", counter, off
+        self._fileobj.seek(
+            pos := self._payload_start + self._counter * ENCRYPTED_CHUNK_SIZE
+        )
+        self._buf, self._off = b"", 0
+
+        self._eof = pos >= self._file_len
+
+        if off > 0:
+            # We have to read a little bit to reach the middle of the chunk
+            self.read(off)
+
+        return self._counter * DATA_CHUNK_SIZE + self._off
 
     def read1(self, size: int = -1) -> bytes:
         if self.closed:
             raise ValueError("I/O operation on closed file.")
+        elif self._eof:
+            return b""
 
         if self._off >= len(self._buf):
             # We're out of data in our buffer. Time to read more
-            cyphertext = self.fileobj.read(ENCRYPTED_CHUNK_SIZE)
-            if not cyphertext:
-                return b""
+            if len(self._next_encrypted_chunk) < ENCRYPTED_CHUNK_SIZE:
+                # Our encrypted buffer isn't full yet; try to read some more
+                data = self._fileobj.read(
+                    2 * ENCRYPTED_CHUNK_SIZE - len(self._next_encrypted_chunk)
+                )
+                self._next_encrypted_chunk += data
 
+                if not data:
+                    if not self._next_encrypted_chunk:
+                        if self._counter > 0:
+                            raise RuntimeError(
+                                "the last chunk must not be empty unless the file is empty!"
+                            )
+                        else:
+                            # We've reached the EOF of an empty file
+                            return b""
+                elif len(self._next_encrypted_chunk) < ENCRYPTED_CHUNK_SIZE + 1:
+                    # Still not enough data.  The user has to call read1() again.
+                    # We need the additional byte to find out whether we're
+                    # currently in the last chunk.
+                    return b""
+
+            # We have enough to decrypt something!
+            cyphertext = self._next_encrypted_chunk[
+                : min(ENCRYPTED_CHUNK_SIZE, len(self._next_encrypted_chunk))
+            ]
             self._buf = self._payload_chacha.decrypt(
-                nonce=_nonce(self._counter, last=self._counter == self.no_chunks - 1),
+                nonce=_nonce(
+                    self._counter,
+                    last=len(self._next_encrypted_chunk) <= ENCRYPTED_CHUNK_SIZE,
+                ),
                 data=cyphertext,
                 associated_data=b"",
             )
+
+            self._next_encrypted_chunk = self._next_encrypted_chunk[len(cyphertext) :]
             self._counter += 1
             self._off = 0
 
+        # Now return as much as requested from our buffer
         if size < 0:
             end = len(self._buf)
         else:
             end = min(self._off + size, len(self._buf))
 
         res = self._buf[self._off : end]
-
         self._off = end
+
+        self._eof = self._off == len(self._buf) and not self._next_encrypted_chunk
+
         return res
 
     def read(self, size: int | None = -1) -> bytes:
         if size is None or size < 0:
             parts = []
-            while part := self.read1():
-                parts.append(part)
+            while not self._eof:
+                parts.append(self.read1())
             return b"".join(parts)
         else:
             parts, bytes_so_far = [], 0
-            while bytes_so_far < size and (part := self.read1(size - bytes_so_far)):
-                parts.append(part)
-                bytes_so_far += len(part)
+            while not self._eof and bytes_so_far < size:
+                parts.append(self.read1(size - bytes_so_far))
+                bytes_so_far += len(parts[-1])
             return b"".join(parts)
 
     def readable(self) -> bool:
-        return self.fileobj.readable()
+        return self._fileobj.readable()
 
     def tell(self) -> int:
         return (self._counter - 1) * DATA_CHUNK_SIZE + self._off
 
 
 def _nonce(counter: int, last: bool) -> bytes:
-    # if counter == self.no_chunks - 1:
-        return counter.to_bytes(11, "big") + (b"\1" if last else b"\0")
-
+    return counter.to_bytes(11, "big") + (b"\1" if last else b"\0")
 
 
 def _parse_header(file: BinaryIO) -> Tuple[Iterable[Stanza], bytes, bytes]:
@@ -331,23 +379,39 @@ def _verify_header(file_key: FileKey, header_lines: bytes, header_hmac: bytes) -
 
 
 if __name__ == "__main__":
+    import sys
     from argparse import ArgumentParser
     from getpass import getpass
 
-    parser = ArgumentParser(usage="decrypt age file")
+    parser = ArgumentParser(description="decrypt age file")
+    # TODO Doesn't do anything yet, to be used when we can actually encrypt
     parser.add_argument("--decrypt", "-d", action="store_true")
-    parser.add_argument("--passphrase", "-p", action="store_true")
-    parser.add_argument("--output", "-o", type=Path)
-    parser.add_argument("input")
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=lambda fn: open(fn, "wb"),
+        default=sys.stdout.buffer,
+    )
+    parser.add_argument(
+        "-i",
+        "--identity",
+        default=[],
+        action="append",
+    )
+    parser.add_argument("input", default=sys.stdin.buffer, nargs="?")
     args = parser.parse_args()
 
-    if args.decrypt:
-        if args.passphrase:
-            keys = [ScryptKey(getpass("Enter passphrase: "))]
+    keys = []
+    if args.identity:
+        for identity_file_path in args.identity:
+            with open(identity_file_path, "rb") as identity_file:
+                magic = identity_file.peek(len(b"age-encryption.org/v1"))
+                if magic.startswith(b"age-encryption.org/v1"):
+                    passphrase = getpass(f"Enter passphrase for {identity_file_path}: ")
+                    keys += X25519Key.from_age_keyfile(identity_file)
+    else:
+        keys = [ScryptKey(getpass(f"Enter passphrase: ").encode())]
 
-        with (
-            AgeFile(args.input, keys=keys) as agefile,
-            open(args.output, "wb") as outfile
-        ):
-            while chunk := agefile.read1():
-                outfile.write(chunk)
+    with ReadAgeFile(args.input, keys=keys) as agefile:
+        while chunk := agefile.read(DATA_CHUNK_SIZE):
+            args.output.write(chunk)

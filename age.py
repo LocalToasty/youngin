@@ -258,7 +258,7 @@ class ReadAgeFile(io.BufferedIOBase):
 
         if self._off >= len(self._buf):
             # We're out of data in our buffer. Time to read more
-            if len(self._next_encrypted_chunk) < ENCRYPTED_CHUNK_SIZE:
+            if len(self._next_encrypted_chunk) < ENCRYPTED_CHUNK_SIZE + 1:
                 # Our encrypted buffer isn't full yet; try to read some more
                 data = self._fileobj.read(
                     2 * ENCRYPTED_CHUNK_SIZE - len(self._next_encrypted_chunk)

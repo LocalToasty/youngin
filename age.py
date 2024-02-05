@@ -418,4 +418,7 @@ if __name__ == "__main__":
 
     with ReadAgeFile(args.input, keys=keys) as agefile:
         while chunk := agefile.read(DATA_CHUNK_SIZE):
-            args.output.write(chunk)
+            try:
+                args.output.write(chunk)
+            except BrokenPipeError:
+                break

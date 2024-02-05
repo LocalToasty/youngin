@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# %%
 import base64
 import io
 from collections.abc import Iterable
@@ -199,6 +198,11 @@ class ReadAgeFile(io.BufferedIOBase):
 
             self.seek(0)
 
+    def detach(self) -> RawIOBase:
+        fileobj = self._fileobj
+        self._fileobj = None
+        return fileobj
+
     def close(self) -> None:
         # Delete all attributes which may contain sensitive data
         del self._payload_chacha, self._buf, self._off, self._counter
@@ -207,7 +211,7 @@ class ReadAgeFile(io.BufferedIOBase):
 
     @property
     def closed(self):
-        return self._fileobj.closed
+        return self._fileobj.closed or not self._fileobj
 
     def seekable(self) -> bool:
         if self.closed:

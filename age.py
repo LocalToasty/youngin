@@ -4,9 +4,8 @@ import io
 import secrets
 from collections.abc import Iterable
 from dataclasses import dataclass
-from io import RawIOBase
 from pathlib import Path
-from typing import BinaryIO, NewType, Optional, Protocol, Self, Sequence, Tuple
+from typing import BinaryIO, NewType, Optional, Protocol, Self, Sequence
 
 import bech32
 from cryptography.exceptions import InvalidTag
@@ -20,7 +19,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 __all__ = [
-    "ReadAgeFile",
+    "AgeReader",
     "Identity",
     "X25519Identity",
     "X25519Recipient",
@@ -93,13 +92,15 @@ class X25519Identity:
             return None
 
         if not any(shared_secret):
-            return RuntimeError("shared secret may not be zero")
+            raise RuntimeError("shared secret may not be zero")
 
         return FileKey(file_key)
 
     @classmethod
     def from_age_keyfile(
-        cls, file: BinaryIO | Path | str, keys: Iterable[Identity] | None = None
+        cls,
+        file: io.BufferedReader | Path | str,
+        keys: Iterable[Identity] | None = None,
     ) -> Iterable[Self]:
         if isinstance(file, (Path, str)):
             file = open(file, "rb")
@@ -108,7 +109,7 @@ class X25519Identity:
         if magic.startswith(b"age-encryption.org/v1"):
             if not keys:
                 raise RuntimeError("no age key to decrypt keyfile supplied")
-            file = ReadAgeFile(file, keys)
+            file = AgeReader(file, keys)
 
         return [
             cls.from_age_secret_key(line.strip().decode())
@@ -130,7 +131,7 @@ class X25519Recipient:
         ephemeral_share = ephemeral_secret.public_key()
         shared_secret = ephemeral_secret.exchange(self._recipient)
         if not any(shared_secret):
-            return RuntimeError("shared secret may not be zero")
+            raise RuntimeError("shared secret may not be zero")
 
         kdf = HKDF(
             algorithm=hashes.SHA256(),
@@ -148,10 +149,13 @@ class X25519Recipient:
         )
 
 
-def bech32_decode(hrp, data):
-    hrpgot, data = bech32.bech32_decode(data)
+def bech32_decode(hrp: str, data: str) -> bytes:
+    hrpgot, decoded_data = bech32.bech32_decode(data)
     assert hrpgot == hrp
-    return bytes(bech32.convertbits(data, 5, 8, pad=False))
+    assert decoded_data is not None
+    data_bytes = bech32.convertbits(decoded_data, 5, 8, pad=False)
+    assert data_bytes is not None
+    return bytes(data_bytes)
 
 
 class ScryptPassphrase:
@@ -211,14 +215,14 @@ TAG_SIZE = 16
 ENCRYPTED_CHUNK_SIZE = DATA_CHUNK_SIZE + TAG_SIZE
 
 
-class ReadAgeFile(io.BufferedIOBase):
+class AgeReader(io.BufferedReader):
     def __init__(
         self,
-        file: RawIOBase | Path | str,
+        file: io.IOBase | Path | str,
         identities: Iterable[Identity],
     ) -> None:
         if isinstance(file, (Path, str)):
-            self._fileobj = open(file, "rb")
+            self._fileobj: io.IOBase = open(file, "rb")
         else:
             self._fileobj = file
 
@@ -272,11 +276,6 @@ class ReadAgeFile(io.BufferedIOBase):
             )
 
             self.seek(0)
-
-    def detach(self) -> RawIOBase:
-        fileobj = self._fileobj
-        self._fileobj = None
-        return fileobj
 
     def close(self) -> None:
         # Delete all attributes which may contain sensitive data
@@ -404,12 +403,15 @@ class ReadAgeFile(io.BufferedIOBase):
     def tell(self) -> int:
         return (self._counter - 1) * DATA_CHUNK_SIZE + self._off
 
+    def peek(self, size: int = 0) -> bytes:
+        return self._buf[self._off : min(self._off + size, len(self._buf))]
+
 
 def _nonce(counter: int, last: bool) -> bytes:
     return counter.to_bytes(11, "big") + (b"\1" if last else b"\0")
 
 
-def _parse_header(file: BinaryIO) -> Tuple[Iterable[Stanza], bytes, bytes]:
+def _parse_header(file: io.IOBase) -> tuple[Iterable[Stanza], bytes, bytes]:
     header_lines = []
     v1_line = next(file)[:-1]
     if v1_line != b"age-encryption.org/v1":
@@ -457,15 +459,15 @@ def _verify_header(file_key: FileKey, header_lines: bytes, header_hmac: bytes) -
     h.verify(header_hmac)
 
 
-class WriteAgeFile(io.BufferedIOBase):
+class AgeWriter(io.BufferedIOBase):
     def __init__(
         self,
-        file: RawIOBase | Path | str,
+        file: BinaryIO | Path | str,
         *,
         recipients: Iterable[Recipient],
     ) -> None:
         if isinstance(file, (Path, str)):
-            self._fileobj = open(file, "wb")
+            self._fileobj: BinaryIO = open(file, "wb")
         else:
             self._fileobj = file
 
@@ -483,7 +485,7 @@ class WriteAgeFile(io.BufferedIOBase):
 
         if (
             any(isinstance(recipient, ScryptPassphrase) for recipient in recipients)
-            and len(recipients) > 1
+            and len(list(recipients)) > 1
         ):
             raise ValueError("scrypt passphrase must be sole recipient if present")
 
@@ -534,10 +536,11 @@ class WriteAgeFile(io.BufferedIOBase):
     def writable(self) -> bool:
         return self._fileobj.writable()
 
-    def write(self, b: bytes) -> int:
+    def write(self, buffer) -> int:
+        # TODO in python 3.12: buffer: collections.abc.Buffer
         if self.closed:
             raise ValueError("I/O operation on closed file.")
-        self._buf += b
+        self._buf += buffer
         while len(self._buf) > DATA_CHUNK_SIZE:
             cyphertext = self._payload_chacha.encrypt(
                 nonce=_nonce(counter=self._counter, last=False),
@@ -550,10 +553,10 @@ class WriteAgeFile(io.BufferedIOBase):
             self._counter += 1
 
         # We always write everything we can and buffer the unencrypted bits
-        return len(b)
+        return len(buffer)
 
 
-def writeall(file: io.RawIOBase, data: bytes) -> int:
+def writeall(file: BinaryIO, data: bytes) -> int:
     written = 0
     while written < len(data):
         new_bytes = file.write(data[written:])
@@ -601,17 +604,16 @@ if __name__ == "__main__":
 
     if args.encrypt:
         if args.passphrase:
-            # passphrase = getpass("Enter passphrase: ")
-            # if passphrase != getpass("Confirm passphrase: "):
-            #     raise RuntimeError("passphrases didn't match")
-            passphrase = "foo"
+            passphrase = getpass("Enter passphrase: ")
+            if passphrase != getpass("Confirm passphrase: "):
+                raise RuntimeError("passphrases didn't match")
             recipients = [ScryptPassphrase(passphrase=passphrase.encode())]
-        with WriteAgeFile(args.outfile, recipients=recipients) as agefile:
+        with AgeWriter(args.outfile, recipients=recipients) as agewriter:
             while chunk := args.infile.read(DATA_CHUNK_SIZE):
-                agefile.write(chunk)
+                agewriter.write(chunk)
 
     else:  # Decrypt
-        identities = []
+        identities: list[Identity] = []
         if args.identities:
             for identity_file_path in args.identities:
                 with open(identity_file_path, "rb") as identity_file:
@@ -624,8 +626,8 @@ if __name__ == "__main__":
         else:
             identities = [ScryptPassphrase(getpass(f"Enter passphrase: ").encode())]
 
-        with ReadAgeFile(args.infile, identities=identities) as agefile:
-            while chunk := agefile.read(DATA_CHUNK_SIZE):
+        with AgeReader(args.infile, identities=identities) as agereader:
+            while chunk := agereader.read(DATA_CHUNK_SIZE):
                 try:
                     writeall(args.outfile, chunk)
                 except BrokenPipeError:

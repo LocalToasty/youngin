@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyage"
+version = "0.1.0"
+requires-python = ">=3.10"
+authors = [
+    { name="Marko van Treeck", email="markovantreeck@gmail.com" },
+]
+description = "A python implementation of age"
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+]
+dependencies = [
+    "bech32~=1.2",
+    "cryptography~=42.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/LocalToasty/pyage"
+"Bug Tracker" = "https://github.com/LocalToasty/pyage/issues"
+
+[project.scripts]
+"pyage" = "pyage.__main__:main"

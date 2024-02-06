@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import base64
 import io
 import secrets
@@ -19,11 +18,13 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 __all__ = [
-    "AgeReader",
     "Identity",
+    "Recipient",
     "X25519Identity",
     "X25519Recipient",
     "ScryptPassphrase",
+    "AgeReader",
+    "AgeWriter",
 ]
 
 
@@ -60,7 +61,7 @@ class X25519Identity:
         self._identity = identity
 
     @classmethod
-    def from_age_secret_key(cls, age_secret_key: str) -> Self:
+    def from_secret_key(cls, age_secret_key: str) -> Self:
         identity = bech32_decode("age-secret-key-", age_secret_key)
         return cls(X25519PrivateKey.from_private_bytes(identity))
 
@@ -97,22 +98,22 @@ class X25519Identity:
         return FileKey(file_key)
 
     @classmethod
-    def from_age_keyfile(
+    def from_keyfile(
         cls,
         file: io.BufferedReader | Path | str,
-        keys: Iterable[Identity] | None = None,
+        identities: Iterable[Identity] | None = None,
     ) -> Iterable[Self]:
         if isinstance(file, (Path, str)):
             file = open(file, "rb")
 
         magic = file.peek(len(b"age-encryption.org/v1"))
         if magic.startswith(b"age-encryption.org/v1"):
-            if not keys:
+            if not identities:
                 raise RuntimeError("no age key to decrypt keyfile supplied")
-            file = AgeReader(file, keys)
+            file = AgeReader(file, identities)
 
         return [
-            cls.from_age_secret_key(line.strip().decode())
+            cls.from_secret_key(line.strip().decode())
             for line in file
             if not line.startswith(b"#") and line.strip()
         ]
@@ -123,7 +124,7 @@ class X25519Recipient:
         self._recipient = X25519PublicKey.from_public_bytes(public_key_bytes)
 
     @classmethod
-    def from_age_public_key(cls, age_recipient: str) -> Self:
+    def from_public_key(cls, age_recipient: str) -> Self:
         return cls(public_key_bytes=bech32_decode("age", age_recipient))
 
     def stanza(self, file_key: FileKey) -> Stanza:
@@ -147,15 +148,6 @@ class X25519Recipient:
             args=[b"X25519", b64encode_no_pad(ephemeral_share.public_bytes_raw())],
             body=body,
         )
-
-
-def bech32_decode(hrp: str, data: str) -> bytes:
-    hrpgot, decoded_data = bech32.bech32_decode(data)
-    assert hrpgot == hrp
-    assert decoded_data is not None
-    data_bytes = bech32.convertbits(decoded_data, 5, 8, pad=False)
-    assert data_bytes is not None
-    return bytes(data_bytes)
 
 
 class ScryptPassphrase:
@@ -210,6 +202,27 @@ def b64encode_no_pad(s: bytes) -> bytes:
     return base64.b64encode(s)[: (len(s) * 8 + 5) // 6]
 
 
+def bech32_encode(hrp: str, data: bytes) -> str:
+    base32 = bech32.convertbits(data, frombits=8, tobits=5)
+    assert base32 is not None
+    return bech32.bech32_encode(hrp, data=base32)
+
+
+def bech32_decode(hrp: str, data: str) -> bytes:
+    hrpgot, decoded_data = bech32.bech32_decode(data)
+    assert hrpgot == hrp
+    assert decoded_data is not None
+    data_bytes = bech32.convertbits(decoded_data, 5, 8, pad=False)
+    assert data_bytes is not None
+    return bytes(data_bytes)
+
+
+__all__ = [
+    "AgeReader",
+    "AgeWriter",
+]
+
+
 DATA_CHUNK_SIZE = 64 * 2**10
 TAG_SIZE = 16
 ENCRYPTED_CHUNK_SIZE = DATA_CHUNK_SIZE + TAG_SIZE
@@ -234,8 +247,8 @@ class AgeReader(io.BufferedReader):
         # Find a matching stanza
         for stanza in stanzas:
             file_key = None
-            for key in identities:
-                file_key = key.decode(stanza)
+            for identity in identities:
+                file_key = identity.decode(stanza)
                 if file_key:
                     break
             if file_key:
@@ -564,71 +577,3 @@ def writeall(file: BinaryIO, data: bytes) -> int:
             written += new_bytes
 
     return written
-
-
-if __name__ == "__main__":
-    import sys
-    from argparse import ArgumentParser, FileType
-    from getpass import getpass
-
-    parser = ArgumentParser(description="decrypt age file")
-
-    parser.add_argument("--encrypt", "-e", default=True, action="store_true")
-    parser.add_argument("-r", "--recipient", default=[], action="append")
-    parser.add_argument("--passphrase", "-p", action="store_true")
-
-    parser.add_argument("--decrypt", "-d", dest="encrypt", action="store_false")
-    parser.add_argument(
-        "-o",
-        "--output",
-        dest="outfile",
-        type=FileType("wb"),
-        default=sys.stdout.buffer,
-    )
-    parser.add_argument(
-        "-i",
-        "--identity",
-        default=[],
-        metavar="IDENTITYFILE",
-        dest="identities",
-        action="append",
-    )
-    parser.add_argument(
-        "infile",
-        metavar="INPUT",
-        type=FileType("rb"),
-        default=sys.stdin.buffer,
-        nargs="?",
-    )
-    args = parser.parse_args()
-
-    if args.encrypt:
-        if args.passphrase:
-            passphrase = getpass("Enter passphrase: ")
-            if passphrase != getpass("Confirm passphrase: "):
-                raise RuntimeError("passphrases didn't match")
-            recipients = [ScryptPassphrase(passphrase=passphrase.encode())]
-        with AgeWriter(args.outfile, recipients=recipients) as agewriter:
-            while chunk := args.infile.read(DATA_CHUNK_SIZE):
-                agewriter.write(chunk)
-
-    else:  # Decrypt
-        identities: list[Identity] = []
-        if args.identities:
-            for identity_file_path in args.identities:
-                with open(identity_file_path, "rb") as identity_file:
-                    magic = identity_file.peek(len(b"age-encryption.org/v1\n"))
-                    if magic.startswith(b"age-encryption.org/v1\n"):
-                        passphrase = getpass(
-                            f"Enter passphrase for {identity_file_path}: "
-                        )
-                        identities += X25519Identity.from_age_keyfile(identity_file)
-        else:
-            identities = [ScryptPassphrase(getpass(f"Enter passphrase: ").encode())]
-
-        with AgeReader(args.infile, identities=identities) as agereader:
-            while chunk := agereader.read(DATA_CHUNK_SIZE):
-                try:
-                    writeall(args.outfile, chunk)
-                except BrokenPipeError:
-                    break

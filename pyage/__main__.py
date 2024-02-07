@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
+import os
 import sys
 from argparse import ArgumentParser, FileType
 from datetime import datetime
+from functools import partial
 from getpass import getpass
 
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
@@ -27,9 +29,7 @@ def main():
     keygen_parser.add_argument(
         "-o",
         "--output",
-        dest="outfile",
-        type=FileType("w"),
-        default=sys.stdout,
+        default="-",
     )
 
     encrypt_parser = subparsers.add_parser("encrypt")
@@ -87,17 +87,20 @@ def main():
         case "keygen":
             secret_key = X25519PrivateKey.generate()
             public_key = secret_key.public_key()
-            args.outfile.write(
-                f"# created: {datetime.now().astimezone().isoformat()}\n"
-            )
-            args.outfile.write(
+            if args.output == "-":
+                outfile = sys.stdout
+            else:
+                outfile = open(args.output, "w", opener=partial(os.open, mode=0o600))
+
+            outfile.write(f"# created: {datetime.now().astimezone().isoformat()}\n")
+            outfile.write(
                 f"# public key: {bech32_encode('age', public_key.public_bytes_raw())}\n"
             )
-            args.outfile.write(
+            outfile.write(
                 f"{bech32_encode('age-secret-key-', secret_key.private_bytes_raw()).upper()}\n"
             )
 
-            if args.outfile != sys.stdout or not sys.stdout.isatty():
+            if not outfile.isatty():
                 sys.stderr.write(
                     f"Public key: {bech32_encode('age', public_key.public_bytes_raw())}\n"
                 )

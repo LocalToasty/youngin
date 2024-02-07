@@ -85,25 +85,19 @@ def main():
 
     match args.command:
         case "keygen":
-            secret_key = X25519PrivateKey.generate()
-            public_key = secret_key.public_key()
+            identity = X25519Identity.generate()
+            recipient = identity.recipient()
             if args.output == "-":
                 outfile = sys.stdout
             else:
                 outfile = open(args.output, "w", opener=partial(os.open, mode=0o600))
 
             outfile.write(f"# created: {datetime.now().astimezone().isoformat()}\n")
-            outfile.write(
-                f"# public key: {bech32_encode('age', public_key.public_bytes_raw())}\n"
-            )
-            outfile.write(
-                f"{bech32_encode('age-secret-key-', secret_key.private_bytes_raw()).upper()}\n"
-            )
+            outfile.write(f"# public key: {recipient}\n")
+            outfile.write(f"{identity}\n")
 
             if not outfile.isatty():
-                sys.stderr.write(
-                    f"Public key: {bech32_encode('age', public_key.public_bytes_raw())}\n"
-                )
+                sys.stderr.write(f"Public key: {recipient}\n")
 
         case "encrypt":
             if args.recipients:

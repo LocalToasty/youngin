@@ -3,7 +3,6 @@ import io
 import re
 import secrets
 from collections.abc import Iterable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, NewType, Optional, Protocol, Self, Sequence
 
@@ -74,13 +73,17 @@ class X25519Identity:
     def __init__(self, identity: X25519PrivateKey) -> None:
         self._identity = identity
 
-    def recipient(self) -> "X25519Recipient":
-        return X25519Recipient(self._identity.public_key().public_bytes_raw())
+    @classmethod
+    def generate(cls) -> Self:
+        return cls(X25519PrivateKey.generate())
 
     @classmethod
     def from_secret_key(cls, age_secret_key: str) -> Self:
         identity = bech32_decode("age-secret-key-", age_secret_key)
         return cls(X25519PrivateKey.from_private_bytes(identity))
+
+    def recipient(self) -> "X25519Recipient":
+        return X25519Recipient(self._identity.public_key().public_bytes_raw())
 
     def decode(self, stanza: Stanza) -> Optional[FileKey]:
         if stanza.args[0] != b"X25519":
@@ -118,6 +121,11 @@ class X25519Identity:
 
         return FileKey(file_key)
 
+    def __str__(self) -> str:
+        return bech32_encode(
+            "age-secret-key-", self._identity.private_bytes_raw()
+        ).upper()
+
     @classmethod
     def from_keyfile(
         cls,
@@ -147,6 +155,9 @@ class X25519Recipient:
     @classmethod
     def from_public_key(cls, age_recipient: str) -> Self:
         return cls(public_key_bytes=bech32_decode("age", age_recipient))
+
+    def __str__(self) -> str:
+        return bech32_encode("age", self._recipient.public_bytes_raw())
 
     def stanza(self, file_key: FileKey) -> Stanza:
         ephemeral_secret = X25519PrivateKey.generate()

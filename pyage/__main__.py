@@ -6,22 +6,18 @@ from datetime import datetime
 from functools import partial
 from getpass import getpass
 
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
-
 from . import (
-    DATA_CHUNK_SIZE,
     AgeReader,
     AgeWriter,
     Identity,
     ScryptPassphrase,
     X25519Identity,
     X25519Recipient,
-    bech32_encode,
-    writeall,
 )
+from .age import DATA_CHUNK_SIZE, writeall
 
 
-def main():
+def main() -> None:
     parser = ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -124,9 +120,10 @@ def main():
                         if magic.startswith(b"age-encryption.org/v1\n"):
                             passphrase = getpass(
                                 f"Enter passphrase for {identity_file_path}: "
-                            ).encode()
+                            )
                             identities += X25519Identity.from_keyfile(
-                                identity_file, identities=[ScryptPassphrase(passphrase)]
+                                identity_file,
+                                identities=[ScryptPassphrase(passphrase.encode())],
                             )
                         else:
                             identities += X25519Identity.from_keyfile(identity_file)

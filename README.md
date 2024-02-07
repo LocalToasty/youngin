@@ -1,4 +1,4 @@
-# pyage: a library for transparent encryption and decryption
+# youngin: a library for transparent encryption and decryption
 
 This package is an implementation of the [age encryption format][age].  It
 supports the linear writing as well as seekable reading of age-encrypted files.
@@ -10,14 +10,14 @@ supports the linear writing as well as seekable reading of age-encrypted files.
  1. **Generate a keypair**
 
     ```
-    $ pyage keygen -o keyfile
+    $ youngin keygen -o keyfile
     Public key: age1f2jle9xffuv0wgck3c5yj7rf6mc9knfzhrmy7w4a55fx6eavr3qs55z8jd
     ```
     The public key may be freely shared.  It will later be used to encrypt the data.
     
     If decryption will take place in an interactive environment, you may even want to encrypt your private key:
     ```
-    $ pyage keygen | pyage encrypt -o keyfile.age
+    $ youngin keygen | youngin encrypt -o keyfile.age
     Public key: age1f2jle9xffuv0wgck3c5yj7rf6mc9knfzhrmy7w4a55fx6eavr3qs55z8jd
     Enter passphrase: [INPUT HIDDEN]
     Confirm passphrase: [INPUT HIDDEN]
@@ -28,7 +28,7 @@ supports the linear writing as well as seekable reading of age-encrypted files.
     `AgeWriter` can be used in many contexts a normal file would be used.
     ```python
     import pandas as pd
-    from pyage import AgeWriter, X25519Recipient
+    from youngin import AgeWriter, X25519Recipient
 
     d = {'col1': [1, 2], 'col2': [3, 4]}
     df = pd.DataFrame(data=d)
@@ -50,7 +50,7 @@ supports the linear writing as well as seekable reading of age-encrypted files.
     Similarly, `AgeReader` object can be used to read from encrypted files:
     ```python
     import pandas as pd
-    from pyage import AgeReader
+    from youngin import AgeReader
 
     with AgeReader(
         "data.csv.age",
@@ -63,7 +63,7 @@ supports the linear writing as well as seekable reading of age-encrypted files.
     query for it like this:
     ```python
     import pandas as pd
-    from pyage import AgeReader, X25519Identity, ScryptPassphrase
+    from youngin import AgeReader, X25519Identity, ScryptPassphrase
     from getpass import getpass
 
     passphrase = getpass().encode()
@@ -82,7 +82,7 @@ Alternatively, this package also includes a CLI to encrypt and decrypt files.
 ### Encryption
 
 ```
-$ pyage encrypt \
+$ youngin encrypt \
     -r age1f2jle9xffuv0wgck3c5yj7rf6mc9knfzhrmy7w4a55fx6eavr3qs55z8jd \
     -o encrypted.txt.age \
     file.txt
@@ -91,5 +91,5 @@ $ pyage encrypt \
 ### Decryption
 
 ```
-$ pyage decrypt -i keyfile -o decrypted.txt encrypted.txt.age
+$ youngin decrypt -i keyfile -o decrypted.txt encrypted.txt.age
 ```

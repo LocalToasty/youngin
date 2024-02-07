@@ -1,10 +1,9 @@
-# %%
 import io
 import unittest
 from pathlib import Path
 
-import pyage
-from pyage import AgeReader, ScryptPassphrase, X25519Identity
+import youngin
+from youngin import AgeReader, ScryptPassphrase, X25519Identity
 
 
 class AgeTestCase(unittest.TestCase):
@@ -32,7 +31,7 @@ class AgeTestCase(unittest.TestCase):
                                 + "Exception"
                             )
                             self.expected_exception = getattr(
-                                pyage, exception_name, Exception
+                                youngin, exception_name, Exception
                             )
                     case b"identity":
                         self.identities.append(

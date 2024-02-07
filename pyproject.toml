@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pyage"
+name = "youngin"
 version = "0.1.0"
 requires-python = ">=3.10"
 authors = [
@@ -25,4 +25,4 @@ dependencies = [
 "Bug Tracker" = "https://github.com/LocalToasty/pyage/issues"
 
 [project.scripts]
-"pyage" = "pyage.__main__:main"
+"youngin" = "pyage.__main__:main"

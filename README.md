@@ -81,15 +81,22 @@ Alternatively, this package also includes a CLI to encrypt and decrypt files.
 
 ### Encryption
 
+You can asymetrically encrypt files by supplying one or multiple recipients
+using the `-r` flag:
 ```
 $ youngin encrypt \
     -r age1f2jle9xffuv0wgck3c5yj7rf6mc9knfzhrmy7w4a55fx6eavr3qs55z8jd \
+    -r age1w75vnxy3zuyu3dx0tamxx7qlf4aux2vfn0xn7atwpug3cdsr0p4qey3fhg \
     -o encrypted.txt.age \
     file.txt
 ```
+If you don't specify any recipients, you will instead be prompted for a password
+which will be used to symmetrically encrypt the file.
 
 ### Decryption
 
+To decrypt an asymmetrically encrypted file, you have to supply your private key
+file using the `-i` flag:
 ```
 $ youngin decrypt -i keyfile -o decrypted.txt encrypted.txt.age
 ```

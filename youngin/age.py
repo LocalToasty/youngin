@@ -2,6 +2,7 @@
 
 import base64
 import io
+import os
 import re
 import secrets
 from collections.abc import Iterable
@@ -308,9 +309,6 @@ class AgeReader(io.BufferedReader):
         else:
             self._fileobj = file
 
-        if self._fileobj.seekable():
-            self._fileobj.seek(0)
-
         stanzas, header_lines, header_hmac = _parse_header(self._fileobj)
 
         # Find a matching stanza
@@ -358,7 +356,7 @@ class AgeReader(io.BufferedReader):
         if self._fileobj.seekable():
             self._payload_start = self._fileobj.tell()
 
-            self._file_len = self._fileobj.seek(0, 2)
+            self._file_len = self._fileobj.seek(0, os.SEEK_END)
             no_chunks = (
                 self._file_len - self._payload_start + ENCRYPTED_CHUNK_SIZE - 1
             ) // ENCRYPTED_CHUNK_SIZE  # rounded up integer division
@@ -366,7 +364,8 @@ class AgeReader(io.BufferedReader):
                 self._file_len - self._payload_start - TAG_SIZE * no_chunks
             )
 
-            self.seek(0)
+            # Seek to the start of the payload
+            self.seek(0, os.SEEK_SET)
 
     def close(self) -> None:
         # Delete all attributes which may contain sensitive data
@@ -387,20 +386,21 @@ class AgeReader(io.BufferedReader):
         if self.closed:
             raise ValueError("I/O operation on closed file.")
 
-        if whence == 0:
-            # Seek from start of file
-            self._counter = offset // DATA_CHUNK_SIZE
-            off = offset % DATA_CHUNK_SIZE
-        elif whence == 1:
-            # Seek from current position
-            self._counter = self._counter + offset // DATA_CHUNK_SIZE
-            off = (self._off + offset) % DATA_CHUNK_SIZE
-        elif whence == 2:
-            # Seek from end of file
-            self._counter = (self._cleartext_len + offset) // DATA_CHUNK_SIZE
-            off = (self._cleartext_len + offset) % DATA_CHUNK_SIZE
-        else:
-            raise NotImplementedError()
+        match whence:
+            case os.SEEK_SET:
+                # Seek from start of file
+                self._counter = offset // DATA_CHUNK_SIZE
+                off = offset % DATA_CHUNK_SIZE
+            case os.SEEK_CUR:
+                # Seek from current position
+                self._counter = self._counter + offset // DATA_CHUNK_SIZE
+                off = (self._off + offset) % DATA_CHUNK_SIZE
+            case os.SEEK_END:
+                # Seek from end of file
+                self._counter = (self._cleartext_len + offset) // DATA_CHUNK_SIZE
+                off = (self._cleartext_len + offset) % DATA_CHUNK_SIZE
+            case _:
+                raise NotImplementedError()
 
         self._fileobj.seek(
             pos := self._payload_start + self._counter * ENCRYPTED_CHUNK_SIZE

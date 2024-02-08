@@ -3,6 +3,7 @@
 
 This interface can be used to generate keys, encrypt and decrypt files.
 """
+import io
 import os
 import sys
 from argparse import ArgumentParser, FileType
@@ -140,8 +141,8 @@ def encrypt_(
             agewriter.write(chunk)
 
 
-def decrypt_(identity_file_paths: Iterable[Path], infile: BinaryIO, outfile: BinaryIO):
-    """Decrypt a file."""
+def decrypt_(identity_file_paths: Iterable[Path], infile: io.IOBase, outfile: BinaryIO) -> None:
+    """Decrypt a file"""
     identities: list[Identity] = []
     # Gather identities, either from one of the key files or as a provided if
     # none is provided

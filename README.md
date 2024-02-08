@@ -5,7 +5,11 @@ supports the linear writing as well as seekable reading of age-encrypted files.
 
 [age]: https://age-encryption.org/v1
 
-## Asymmetric reading and writing
+
+## Asymmetric encryption
+
+In most cases, asymmetric encryption should be be the preferred way to use
+youngin.
 
  1. **Generate a keypair**
 
@@ -15,7 +19,8 @@ supports the linear writing as well as seekable reading of age-encrypted files.
     ```
     The public key may be freely shared.  It will later be used to encrypt the data.
     
-    If decryption will take place in an interactive environment, you may even want to encrypt your private key:
+    If decryption will take place in an interactive environment, you may even
+    want to encrypt your private key:
     ```
     $ youngin keygen | youngin encrypt -o keyfile.age
     Public key: age1f2jle9xffuv0wgck3c5yj7rf6mc9knfzhrmy7w4a55fx6eavr3qs55z8jd
@@ -36,6 +41,7 @@ supports the linear writing as well as seekable reading of age-encrypted files.
     with AgeWriter(
         "data.csv.age", recipients=[
             X25519Recipient.from_public_key("age1f2jle9xffuv0wgck3c5yj7rf6mc9knfzhrmy7w4a55fx6eavr3qs55z8jd"),
+            X25519Recipient.from_public_key("age1w75vnxy3zuyu3dx0tamxx7qlf4aux2vfn0xn7atwpug3cdsr0p4qey3fhg"),
         ]
     ) as agefile:
         df.to_csv(agefile)
@@ -100,3 +106,10 @@ file using the `-i` flag:
 ```
 $ youngin decrypt -i keyfile -o decrypted.txt encrypted.txt.age
 ```
+
+## TODOs
+
+  - Recipient files in the CLI interface
+  - Support for SSH ed25519 keys
+  - Limited write-once seeking support in AgeWriter
+  - Simultaneous read-write support

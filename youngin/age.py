@@ -1,3 +1,5 @@
+"""Read and write age-encrypted files."""
+
 import base64
 import io
 import re
@@ -38,6 +40,9 @@ MAX_WORK_FACTOR_LOG_2 = 20
 
 
 class Stanza:
+    # pylint: disable=too-few-public-methods
+    """A stanza in an age header"""
+
     def __init__(self, args: Sequence[bytes], body: bytes) -> None:
         if not args:
             raise HeaderFailureException("empty stanza is not allowed")
@@ -66,19 +71,33 @@ FileKey = NewType("FileKey", bytes)
 
 
 class Recipient(Protocol):
-    def stanza(self, file_key: FileKey) -> Stanza: ...
+    """A recipient of an age-encrypted file"""
+
+    # pylint: disable=too-few-public-methods
+    def stanza(self, file_key: FileKey) -> Stanza:
+        """Returns a stanza describing this recipient."""
 
 
 class Identity(Protocol):
-    def decode(self, stanza: Stanza) -> Optional[FileKey]: ...
+    """The identity of a person an age message is addressed to"""
+
+    # pylint: disable=too-few-public-methods
+    def decode(self, stanza: Stanza) -> Optional[FileKey]:
+        """Extract the file key from a stanza.
+
+        Returns `None` if the stanza's recipient does not match this identity.
+        """
 
 
 class X25519Recipient:
+    """A X25519 recipient for an age file"""
+
     def __init__(self, recipient: X25519PublicKey) -> None:
         self._recipient = recipient
 
     @classmethod
     def from_public_key(cls, age_recipient: str) -> Self:
+        """Create an age X25519 recipient from an age public key."""
         return cls(
             X25519PublicKey.from_public_bytes(bech32_decode("age", age_recipient))
         )
@@ -115,6 +134,7 @@ class X25519Identity:
 
     @classmethod
     def generate(cls) -> Self:
+        """Create a new X25519 identity."""
         return cls(X25519PrivateKey.generate())
 
     @classmethod

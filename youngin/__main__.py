@@ -141,7 +141,9 @@ def encrypt_(
             agewriter.write(chunk)
 
 
-def decrypt_(identity_file_paths: Iterable[Path], infile: io.IOBase, outfile: BinaryIO) -> None:
+def decrypt_(
+    identity_file_paths: Iterable[Path], infile: io.IOBase, outfile: BinaryIO
+) -> None:
     """Decrypt a file"""
     identities: list[Identity] = []
     # Gather identities, either from one of the key files or as a provided if

@@ -18,13 +18,17 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 __all__ = [
+    "AgeReader",
+    "AgeWriter",
     "Identity",
     "Recipient",
     "X25519Identity",
     "X25519Recipient",
     "ScryptPassphrase",
-    "AgeReader",
-    "AgeWriter",
+    "PayloadFailureException",
+    "HeaderFailureException",
+    "NoMatchException",
+    "HmacFailureException",
 ]
 
 DATA_CHUNK_SIZE = 64 * 2**10
@@ -41,8 +45,8 @@ class Stanza:
             raise HeaderFailureException("empty stanza argument")
         try:
             [arg.decode(encoding="ascii") for arg in args]
-        except UnicodeDecodeError:
-            raise HeaderFailureException("stanza args have to be all ascii")
+        except UnicodeDecodeError as e:
+            raise HeaderFailureException("stanza args have to be all ascii") from e
         self.args = args
         self.body = body
 
@@ -533,23 +537,6 @@ def _parse_header(file: io.IOBase) -> tuple[Iterable[Stanza], bytes, bytes]:
             raise HeaderFailureException("unexcepted start of line in header")
 
 
-class PayloadFailureException(Exception):
-    """Raised if there was an error decrypting the payload."""
-
-
-class HeaderFailureException(Exception):
-    """Raised if there was an error parsing the header."""
-
-
-class NoMatchException(Exception):
-    """Raised if none of the provided identities could be matched to any of the
-    recipients of an AgeWriter."""
-
-
-class HmacFailureException(Exception):
-    """Raised if the header HMAC did not match."""
-
-
 def _verify_header(file_key: FileKey, header_lines: bytes, header_hmac: bytes) -> None:
     hmac_hkdf = HKDF(
         algorithm=hashes.SHA256(),
@@ -565,6 +552,23 @@ def _verify_header(file_key: FileKey, header_lines: bytes, header_hmac: bytes) -
         h.verify(header_hmac)
     except InvalidSignature as e:
         raise HmacFailureException(e) from e
+
+
+class PayloadFailureException(Exception):
+    """Raised if there was an error decrypting the payload."""
+
+
+class HeaderFailureException(Exception):
+    """Raised if there was an error parsing the header."""
+
+
+class NoMatchException(Exception):
+    """Raised if none of the provided identities could be matched to any of the
+    recipients of an AgeWriter."""
+
+
+class HmacFailureException(Exception):
+    """Raised if the header HMAC did not match."""
 
 
 class AgeWriter(io.BufferedIOBase):

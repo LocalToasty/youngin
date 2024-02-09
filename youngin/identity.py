@@ -182,16 +182,17 @@ class X25519Identity:
     def from_keyfile(
         cls,
         file: io.BufferedReader | Path | str,
-        # identities: Iterable[Identity] | None = None,
+        identities: Iterable[Identity] | None = None,
     ) -> Iterable[Self]:
         if isinstance(file, (Path, str)):
             file = open(file, "rb")
 
-        # magic = file.peek(len(b"age-encryption.org/v1"))
-        # if magic.startswith(b"age-encryption.org/v1"):
-        #     if not identities:
-        #         raise RuntimeError("no age key to decrypt keyfile supplied")
-        #     file = AgeReader(file, identities)
+        magic = file.peek(len(b"age-encryption.org/v1"))
+        if magic.startswith(b"age-encryption.org/v1"):
+            if not identities:
+                raise RuntimeError("no age key to decrypt keyfile supplied")
+            from .reader import AgeReader
+            file = AgeReader(file, identities)
 
         return [
             cls.from_secret_key(line.strip().decode())

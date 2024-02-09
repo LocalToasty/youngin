@@ -111,5 +111,4 @@ $ youngin decrypt -i keyfile -o decrypted.txt encrypted.txt.age
 
   - Recipient files in the CLI interface
   - Support for SSH ed25519 keys
-  - Limited write-once seeking support in AgeWriter
   - Simultaneous read-write support

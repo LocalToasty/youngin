@@ -23,7 +23,8 @@ from . import (
     X25519Identity,
     X25519Recipient,
 )
-from .age import DATA_CHUNK_SIZE, writeall
+from .reader import DATA_CHUNK_SIZE
+from .writer import writeall
 
 
 def main() -> None:
@@ -126,7 +127,9 @@ def keygen_(outfile: TextIO) -> None:
 
 
 def encrypt_(
-    recipients: Iterable[Recipient], infile: BinaryIO, outfile: BinaryIO
+    recipients: Iterable[Recipient],
+    infile: BinaryIO,
+    outfile: io.BufferedIOBase,
 ) -> None:
     """Encrypt a file"""
     if not recipients:
@@ -142,7 +145,7 @@ def encrypt_(
 
 
 def decrypt_(
-    identity_file_paths: Iterable[Path], infile: io.IOBase, outfile: BinaryIO
+    identity_file_paths: Iterable[Path], infile: io.IOBase, outfile: io.RawIOBase
 ) -> None:
     """Decrypt a file"""
     identities: list[Identity] = []

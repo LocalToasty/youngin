@@ -1,4 +1,4 @@
-"""Read and write age-encrypted files."""
+"""Read age-encrypted files."""
 
 import base64
 import io
@@ -7,7 +7,7 @@ import re
 import secrets
 from collections.abc import Iterable
 from pathlib import Path
-from typing import BinaryIO, NewType, Optional, Protocol, Self, Sequence
+from typing import NewType, Optional, Protocol, Self, Sequence
 
 import bech32
 from cryptography.exceptions import InvalidSignature, InvalidTag
@@ -22,7 +22,6 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 __all__ = [
     "AgeReader",
-    "AgeWriter",
     "Identity",
     "Recipient",
     "X25519Identity",
@@ -589,121 +588,3 @@ class NoMatchException(Exception):
 
 class HmacFailureException(Exception):
     """Raised if the header HMAC did not match."""
-
-
-class AgeWriter(io.BufferedIOBase):
-    """A binary stream transparently encrypting data before writing it to disk.
-
-    No data written to this stream will be written to the underlying raw stream
-    unencrypted.  Due to the requirement of age to not reuse a payload key,
-    seeking and overwriting already-written data is not possible.
-    """
-
-    # TODO allow seeking to not-yet-written chunks
-    def __init__(
-        self,
-        file: BinaryIO | Path | str,
-        *,
-        recipients: Iterable[Recipient],
-    ) -> None:
-        if isinstance(file, (Path, str)):
-            # pylint: disable=consider-using-with
-            self._fileobj: BinaryIO = open(file, "wb")
-        else:
-            self._fileobj = file
-
-        header_parts = [b"age-encryption.org/v1"]
-
-        payload_nonce = secrets.token_bytes(16)
-        file_key = FileKey(secrets.token_bytes(16))
-        payload_hkdf = HKDF(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=payload_nonce,
-            info=b"payload",
-        )
-        payload_key = payload_hkdf.derive(file_key)
-
-        if (
-            any(isinstance(recipient, ScryptPassphrase) for recipient in recipients)
-            and len(list(recipients)) > 1
-        ):
-            raise ValueError("scrypt passphrase must be sole recipient if present")
-
-        for recipient in recipients:
-            header_parts.append(bytes(recipient.stanza(file_key)))
-        header_parts.append(b"---")
-        header_bytes = b"\n".join(header_parts)
-
-        hmac_hkdf = HKDF(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=b"",
-            info=b"header",
-        )
-        hmac_key = hmac_hkdf.derive(key_material=file_key)
-
-        h = hmac.HMAC(key=hmac_key, algorithm=hashes.SHA256())
-        h.update(header_bytes)
-        digest = h.finalize()
-
-        writeall(self._fileobj, header_bytes)
-        writeall(self._fileobj, b" " + b64encode_no_pad(digest) + b"\n")
-        writeall(self._fileobj, payload_nonce)
-
-        self._buf = b""
-        self._counter = 0
-        self._payload_chacha = ChaCha20Poly1305(payload_key)
-
-    def close(self) -> None:
-        if self.closed:
-            return None
-
-        # Write whatever is left in the buffer
-        assert len(self._buf) <= DATA_CHUNK_SIZE
-        cyphertext = self._payload_chacha.encrypt(
-            nonce=_nonce(counter=self._counter, last=True),
-            data=self._buf,
-            associated_data=b"",
-        )
-        writeall(self._fileobj, cyphertext)
-
-        return self._fileobj.close()
-
-    @property
-    def closed(self) -> bool:
-        """True if the underlying fileobject is closed"""
-        return not self._fileobj or self._fileobj.closed
-
-    def writable(self) -> bool:
-        return self._fileobj.writable()
-
-    def write(self, buffer) -> int:
-        # TODO in python 3.12: buffer: collections.abc.Buffer
-        if self.closed:
-            raise ValueError("I/O operation on closed file.")
-        self._buf += buffer
-        while len(self._buf) > DATA_CHUNK_SIZE:
-            cyphertext = self._payload_chacha.encrypt(
-                nonce=_nonce(counter=self._counter, last=False),
-                data=self._buf[:DATA_CHUNK_SIZE],
-                associated_data=b"",
-            )
-            writeall(self._fileobj, cyphertext)
-
-            self._buf = self._buf[DATA_CHUNK_SIZE:]
-            self._counter += 1
-
-        # We always write everything we can and buffer the unencrypted bits
-        return len(buffer)
-
-
-def writeall(stream: BinaryIO, data: bytes) -> int:
-    """Write all of data to a stream, blocking until done."""
-    written = 0
-    while written < len(data):
-        new_bytes = stream.write(data[written:])
-        if new_bytes is not None:
-            written += new_bytes
-
-    return written

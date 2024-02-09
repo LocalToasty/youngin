@@ -1,3 +1,4 @@
+"""Write age-encrypted files"""
 import io
 import os
 import secrets
@@ -9,15 +10,9 @@ from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from .reader import (
-    DATA_CHUNK_SIZE,
-    ENCRYPTED_CHUNK_SIZE,
-    TAG_SIZE,
-    FileKey,
-    Recipient,
-    ScryptPassphrase,
-    b64encode_no_pad,
-)
+from .binascii import b64encode_no_pad
+from .identity import Recipient, ScryptPassphrase
+from .reader import DATA_CHUNK_SIZE, ENCRYPTED_CHUNK_SIZE, TAG_SIZE, FileKey
 
 
 class AgeWriter(io.BufferedIOBase):
@@ -37,7 +32,7 @@ class AgeWriter(io.BufferedIOBase):
         # pylint: disable=consider-using-with
         if isinstance(file, (Path, str)):
             file = open(file, "wb")
-        assert isinstance(file, io.RawIOBase)
+        assert isinstance(file, io.BufferedIOBase)
 
         header_parts = [b"age-encryption.org/v1"]
 

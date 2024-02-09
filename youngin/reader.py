@@ -1,300 +1,29 @@
 """Read age-encrypted files."""
 
-import base64
 import io
 import os
-import re
-import secrets
 from collections.abc import Iterable
 from pathlib import Path
-from typing import NewType, Optional, Protocol, Self, Sequence
 
-import bech32
 from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives import hashes, hmac
-from cryptography.hazmat.primitives.asymmetric.x25519 import (
-    X25519PrivateKey,
-    X25519PublicKey,
-)
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
-__all__ = [
-    "AgeReader",
-    "Identity",
-    "Recipient",
-    "X25519Identity",
-    "X25519Recipient",
-    "ScryptPassphrase",
-    "PayloadFailureException",
-    "HeaderFailureException",
-    "NoMatchException",
-    "HmacFailureException",
-]
+from .binascii import b64decode_no_pad
+from .exceptions import (
+    HeaderFailureException,
+    HmacFailureException,
+    NoMatchException,
+    PayloadFailureException,
+)
+from .identity import FileKey, Identity, ScryptPassphrase, Stanza
+
+__all__ = ["AgeReader"]
 
 DATA_CHUNK_SIZE = 64 * 2**10
 TAG_SIZE = 16
 ENCRYPTED_CHUNK_SIZE = DATA_CHUNK_SIZE + TAG_SIZE
-MAX_WORK_FACTOR_LOG_2 = 20
-
-
-class Stanza:
-    # pylint: disable=too-few-public-methods
-    """A stanza in an age header"""
-
-    def __init__(self, args: Sequence[bytes], body: bytes) -> None:
-        if not args:
-            raise HeaderFailureException("empty stanza is not allowed")
-        if not all(args):
-            raise HeaderFailureException("empty stanza argument")
-        try:
-            [arg.decode(encoding="ascii") for arg in args]
-        except UnicodeDecodeError as e:
-            raise HeaderFailureException("stanza args have to be all ascii") from e
-        self.args = args
-        self.body = body
-
-    def __bytes__(self) -> bytes:
-        arg_bytes = b"-> " + b" ".join(self.args)
-        body_bytes = b64encode_no_pad(self.body)
-        body_lines = [
-            body_bytes[i : min(i + 64, len(body_bytes))]
-            for i in range(0, len(body_bytes), 64)
-        ]
-        if not body_lines or len(body_lines[-1]) == 64:
-            body_lines.append(b"")
-        return b"\n".join([arg_bytes, b"\n".join(body_lines)])
-
-
-FileKey = NewType("FileKey", bytes)
-
-
-class Recipient(Protocol):
-    """A recipient of an age-encrypted file"""
-
-    # pylint: disable=too-few-public-methods
-    def stanza(self, file_key: FileKey) -> Stanza:
-        """Returns a stanza describing this recipient."""
-
-
-class Identity(Protocol):
-    """The identity of a person an age message is addressed to"""
-
-    # pylint: disable=too-few-public-methods
-    def decode(self, stanza: Stanza) -> Optional[FileKey]:
-        """Extract the file key from a stanza.
-
-        Returns `None` if the stanza's recipient does not match this identity.
-        """
-
-
-class X25519Recipient:
-    """A X25519 recipient for an age file"""
-
-    def __init__(self, recipient: X25519PublicKey) -> None:
-        self._recipient = recipient
-
-    @classmethod
-    def from_public_key(cls, age_recipient: str) -> Self:
-        """Create an age X25519 recipient from an age public key."""
-        return cls(
-            X25519PublicKey.from_public_bytes(bech32_decode("age", age_recipient))
-        )
-
-    def __str__(self) -> str:
-        return bech32_encode("age", self._recipient.public_bytes_raw())
-
-    def stanza(self, file_key: FileKey) -> Stanza:
-        ephemeral_secret = X25519PrivateKey.generate()
-        ephemeral_share = ephemeral_secret.public_key()
-        shared_secret = ephemeral_secret.exchange(self._recipient)
-        if not any(shared_secret):
-            raise RuntimeError("shared secret may not be zero")
-
-        kdf = HKDF(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=ephemeral_share.public_bytes_raw()
-            + self._recipient.public_bytes_raw(),
-            info=b"age-encryption.org/v1/X25519",
-        )
-        wrap_key = kdf.derive(shared_secret)
-        wrap_chacha = ChaCha20Poly1305(wrap_key)
-        body = wrap_chacha.encrypt(nonce=b"\0" * 12, data=file_key, associated_data=b"")
-        return Stanza(
-            args=[b"X25519", b64encode_no_pad(ephemeral_share.public_bytes_raw())],
-            body=body,
-        )
-
-
-class X25519Identity:
-    def __init__(self, identity: X25519PrivateKey) -> None:
-        self._identity = identity
-
-    @classmethod
-    def generate(cls) -> Self:
-        """Create a new X25519 identity."""
-        return cls(X25519PrivateKey.generate())
-
-    @classmethod
-    def from_secret_key(cls, age_secret_key: str) -> Self:
-        identity = bech32_decode("age-secret-key-", age_secret_key)
-        return cls(X25519PrivateKey.from_private_bytes(identity))
-
-    def recipient(self) -> X25519Recipient:
-        return X25519Recipient(self._identity.public_key())
-
-    def decode(self, stanza: Stanza) -> Optional[FileKey]:
-        if stanza.args[0] != b"X25519":
-            return None
-        if len(stanza.args) != 2:
-            raise HeaderFailureException("X25519 stanza must have two arguments")
-
-        recipient: X25519PublicKey = self._identity.public_key()
-        ephemeral_share = b64decode_no_pad(stanza.args[1])
-        if len(ephemeral_share) != 32:
-            raise HeaderFailureException("X25519 share is short")
-        try:
-            shared_secret = self._identity.exchange(
-                X25519PublicKey.from_public_bytes(ephemeral_share)
-            )
-        except ValueError as e:
-            raise HeaderFailureException(e)
-
-        kdf = HKDF(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=ephemeral_share + recipient.public_bytes_raw(),
-            info=b"age-encryption.org/v1/X25519",
-        )
-        wrap_key = kdf.derive(key_material=shared_secret)
-        wrap_chacha = ChaCha20Poly1305(wrap_key)
-        try:
-            file_key = wrap_chacha.decrypt(
-                nonce=b"\0" * 12, data=stanza.body, associated_data=b""
-            )
-        except InvalidTag:
-            return None
-        if len(file_key) != 16:
-            raise HeaderFailureException("the file key must be 16 bytes long")
-
-        return FileKey(file_key)
-
-    def __str__(self) -> str:
-        return bech32_encode(
-            "age-secret-key-", self._identity.private_bytes_raw()
-        ).upper()
-
-    @classmethod
-    def from_keyfile(
-        cls,
-        file: io.BufferedReader | Path | str,
-        identities: Iterable[Identity] | None = None,
-    ) -> Iterable[Self]:
-        if isinstance(file, (Path, str)):
-            file = open(file, "rb")
-
-        magic = file.peek(len(b"age-encryption.org/v1"))
-        if magic.startswith(b"age-encryption.org/v1"):
-            if not identities:
-                raise RuntimeError("no age key to decrypt keyfile supplied")
-            file = AgeReader(file, identities)
-
-        return [
-            cls.from_secret_key(line.strip().decode())
-            for line in file
-            if not line.startswith(b"#") and line.strip()
-        ]
-
-
-class ScryptPassphrase:
-    def __init__(self, passphrase: bytes) -> None:
-        self._passphrase = passphrase
-
-    def decode(self, stanza: Stanza) -> Optional[FileKey]:
-        if stanza.args[0] != b"scrypt":
-            return None
-        if len(stanza.args) != 3:
-            raise HeaderFailureException("scrypt stanza must have three arguments")
-        salt = b64decode_no_pad(stanza.args[1])
-        if len(salt) != 16:
-            raise HeaderFailureException("scrypt salt must be 16 bytes long")
-
-        if not re.match(r"^[1-9][0-9]*$", stanza.args[2].decode()):
-            raise HeaderFailureException("work factor needs to be a positive integer")
-        work_factor_log2 = int(stanza.args[2])
-        if work_factor_log2 > MAX_WORK_FACTOR_LOG_2 or work_factor_log2 <= 0:
-            raise HeaderFailureException("work factor too high or low")
-
-        kdf = Scrypt(
-            salt=b"age-encryption.org/v1/scrypt" + salt,
-            length=32,
-            n=2**work_factor_log2,
-            r=8,
-            p=1,
-        )
-        wrap_key = kdf.derive(self._passphrase)
-        wrap_chacha = ChaCha20Poly1305(wrap_key)
-        try:
-            file_key = wrap_chacha.decrypt(
-                nonce=b"\0" * 12, data=stanza.body, associated_data=b""
-            )
-        except InvalidTag:
-            return None
-        if len(file_key) != 16:
-            raise HeaderFailureException("the file key must be 16 bytes long")
-        return FileKey(file_key)
-
-    def stanza(self, file_key: FileKey, work_factor_log2: int = 18) -> Stanza:
-        salt = secrets.token_bytes(16)
-        kdf = Scrypt(
-            salt=b"age-encryption.org/v1/scrypt" + salt,
-            length=32,
-            n=2**work_factor_log2,
-            r=8,
-            p=1,
-        )
-        wrap_key = kdf.derive(self._passphrase)
-        wrap_chacha = ChaCha20Poly1305(wrap_key)
-        body = wrap_chacha.encrypt(nonce=b"\0" * 12, data=file_key, associated_data=b"")
-
-        return Stanza(
-            args=[b"scrypt", b64encode_no_pad(salt), str(work_factor_log2).encode()],
-            body=body,
-        )
-
-
-def b64encode_no_pad(s: bytes) -> bytes:
-    return base64.b64encode(s)[: (len(s) * 8 + 5) // 6]
-
-
-def b64decode_no_pad(b: bytes) -> bytes:
-    if b.endswith(b"="):
-        raise HeaderFailureException("padding in base64 not allowed")
-    if len(b) % 4 == 0:
-        return base64.b64decode(b)
-
-    decoded_len = (len(b) * 6) // 8
-    decoded = base64.b64decode(b + b"A==")
-    if decoded[decoded_len:] != b"\0":
-        raise HeaderFailureException("non-canonical base64")
-    return decoded[:decoded_len]
-
-
-def bech32_encode(hrp: str, data: bytes) -> str:
-    base32 = bech32.convertbits(data, frombits=8, tobits=5)
-    assert base32 is not None
-    return bech32.bech32_encode(hrp, data=base32)
-
-
-def bech32_decode(hrp: str, data: str) -> bytes:
-    hrpgot, decoded_data = bech32.bech32_decode(data)
-    assert hrpgot == hrp
-    assert decoded_data is not None
-    data_bytes = bech32.convertbits(decoded_data, 5, 8, pad=False)
-    assert data_bytes is not None
-    return bytes(data_bytes)
 
 
 class AgeReader(io.BufferedReader):
@@ -571,20 +300,3 @@ def _verify_header(file_key: FileKey, header_lines: bytes, header_hmac: bytes) -
         h.verify(header_hmac)
     except InvalidSignature as e:
         raise HmacFailureException(e) from e
-
-
-class PayloadFailureException(Exception):
-    """Raised if there was an error decrypting the payload."""
-
-
-class HeaderFailureException(Exception):
-    """Raised if there was an error parsing the header."""
-
-
-class NoMatchException(Exception):
-    """Raised if none of the provided identities could be matched to any of the
-    recipients of an AgeWriter."""
-
-
-class HmacFailureException(Exception):
-    """Raised if the header HMAC did not match."""

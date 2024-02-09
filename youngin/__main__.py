@@ -154,15 +154,15 @@ def decrypt_(
     if identity_file_paths:
         for identity_file_path in identity_file_paths:
             with open(identity_file_path, "rb") as identity_file:
-                magic = identity_file.peek(len(b"age-encryption.org/v1\n"))
-                if magic.startswith(b"age-encryption.org/v1\n"):
-                    passphrase = getpass(f"Enter passphrase for {identity_file_path}: ")
-                    identities += X25519Identity.from_keyfile(
-                        identity_file,
-                        identities=[ScryptPassphrase(passphrase.encode())],
-                    )
-                else:
-                    identities += X25519Identity.from_keyfile(identity_file)
+                # magic = identity_file.peek(len(b"age-encryption.org/v1\n"))
+                # if magic.startswith(b"age-encryption.org/v1\n"):
+                #     passphrase = getpass(f"Enter passphrase for {identity_file_path}: ")
+                #     identities += X25519Identity.from_keyfile(
+                #         identity_file,
+                #         identities=[ScryptPassphrase(passphrase.encode())],
+                #     )
+                # else:
+                identities += X25519Identity.from_keyfile(identity_file)
     else:
         identities = [ScryptPassphrase(getpass("Enter passphrase: ").encode())]
 

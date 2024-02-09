@@ -1,15 +1,17 @@
 """Encrypt and decrypt files in the age format."""
 
-from .reader import (
-    AgeReader,
+from .exceptions import (
     HeaderFailureException,
     HmacFailureException,
-    Identity,
     NoMatchException,
     PayloadFailureException,
+)
+from .identity import (
+    Identity,
     Recipient,
     ScryptPassphrase,
     X25519Identity,
     X25519Recipient,
 )
+from .reader import AgeReader
 from .writer import AgeWriter

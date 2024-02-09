@@ -1,4 +1,5 @@
 """Convenience functions for reading and writing binascii formats"""
+
 import base64
 
 import bech32

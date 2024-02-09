@@ -1,4 +1,5 @@
 """Write age-encrypted files"""
+
 import io
 import os
 import secrets
@@ -32,8 +33,7 @@ class AgeWriter(io.BufferedIOBase):
         # pylint: disable=consider-using-with
         if isinstance(file, (Path, str)):
             file = open(file, "wb")
-        assert isinstance(file, io.BufferedIOBase)
-
+        #
         header_parts = [b"age-encryption.org/v1"]
 
         payload_nonce = secrets.token_bytes(16)
@@ -103,7 +103,7 @@ class AgeWriter(io.BufferedIOBase):
 
 class ChaChaFile(io.BufferedIOBase):
     def __init__(
-        self, file: io.RawIOBase, chunk_size: int, chacha: ChaCha20Poly1305
+        self, file: io.BufferedIOBase, chunk_size: int, chacha: ChaCha20Poly1305
     ) -> None:
         self._fileobj = file
         if self._fileobj.seekable():
@@ -267,7 +267,7 @@ def _nonce(counter: int, last: bool) -> bytes:
     return counter.to_bytes(11, "big") + (b"\1" if last else b"\0")
 
 
-def writeall(stream: io.RawIOBase, data: bytes) -> int:
+def writeall(stream: io.BufferedIOBase, data: bytes) -> int:
     """Write all of data to a stream, blocking until done."""
     written = 0
     while written < len(data):

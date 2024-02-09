@@ -145,7 +145,7 @@ def encrypt_(
 
 
 def decrypt_(
-    identity_file_paths: Iterable[Path], infile: io.IOBase, outfile: io.RawIOBase
+    identity_file_paths: Iterable[Path], infile: io.IOBase, outfile: io.BufferedIOBase
 ) -> None:
     """Decrypt a file"""
     identities: list[Identity] = []

@@ -26,7 +26,7 @@ TAG_SIZE = 16
 ENCRYPTED_CHUNK_SIZE = DATA_CHUNK_SIZE + TAG_SIZE
 
 
-class AgeReader(io.BufferedReader):
+class AgeReader(io.BufferedIOBase):
     def __init__(
         self,
         file: io.IOBase | Path | str,

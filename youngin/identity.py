@@ -187,16 +187,21 @@ class X25519Identity:
         if isinstance(file, (Path, str)):
             file = open(file, "rb")
 
-        magic = file.peek(len(b"age-encryption.org/v1"))
-        if magic.startswith(b"age-encryption.org/v1"):
+        magic = file.read(len(b"age-encryption.org/v1"))
+        keyfile: io.IOBase
+        if magic == b"age-encryption.org/v1":
             if not identities:
                 raise RuntimeError("no age key to decrypt keyfile supplied")
             from .reader import AgeReader
-            file = AgeReader(file, identities)
 
+            keyfile = AgeReader(file, identities)
+        else:
+            keyfile = file
+
+        # FIXME crashes here
         return [
             cls.from_secret_key(line.strip().decode())
-            for line in file
+            for line in keyfile
             if not line.startswith(b"#") and line.strip()
         ]
 

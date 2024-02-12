@@ -102,6 +102,9 @@ class AgeWriter(io.BufferedIOBase):
 
         return self._payload.write(buffer)
 
+    def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
+        return self._payload.seek(offset, whence)
+
 
 class AgePayload(io.BufferedIOBase):
     def __init__(self, file: io.IOBase, chacha: ChaCha20Poly1305) -> None:
@@ -125,7 +128,7 @@ class AgePayload(io.BufferedIOBase):
             case os.SEEK_CUR:
                 new_pos = self._pos + offset
             case os.SEEK_END:
-                new_pos = min(self._size + offset, 0)
+                new_pos = max(self._size + offset, 0)
 
         self._pos = new_pos
 
@@ -203,7 +206,7 @@ class AgePayload(io.BufferedIOBase):
         if self.closed:
             raise ValueError("I/O operation on closed file.")
         if self._pos // DATA_CHUNK_SIZE < self._chunks_committed_so_far:
-            raise io.UnsupportedOperation("cannot seek to already committed chunk")
+            raise RuntimeError("cannot seek to already committed chunk")
 
         pos_in_chunk = self._pos % DATA_CHUNK_SIZE
         space_left_in_chunk = DATA_CHUNK_SIZE - pos_in_chunk

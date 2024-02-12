@@ -53,7 +53,7 @@ def main() -> None:
         metavar="RECIPIENT",
         dest="recipients",
         type=X25519Recipient.from_public_key,
-        default=None,
+        default=[],
         action="append",
     )
     encrypt_parser.add_argument(
@@ -62,7 +62,7 @@ def main() -> None:
         metavar="PATH",
         dest="recipients",
         type=lambda p: list(X25519Recipient.from_recipient_file(p)),
-        default=None,
+        default=[],
         action="append",
     )
     encrypt_parser.add_argument(

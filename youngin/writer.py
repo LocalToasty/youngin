@@ -26,14 +26,14 @@ class AgeWriter(io.BufferedIOBase):
 
     def __init__(
         self,
-        file: io.BufferedIOBase | Path | str,
+        file: io.IOBase | Path | str,
         *,
         recipients: Iterable[Recipient],
     ) -> None:
         # pylint: disable=consider-using-with
         if isinstance(file, (Path, str)):
             file = open(file, "wb")
-        #
+
         header_parts = [b"age-encryption.org/v1"]
 
         payload_nonce = secrets.token_bytes(16)
@@ -73,9 +73,8 @@ class AgeWriter(io.BufferedIOBase):
         writeall(file, b" " + b64encode_no_pad(digest) + b"\n")
         writeall(file, payload_nonce)
 
-        self._chacha_file = ChaChaFile(
+        self._payload = AgePayload(
             file,
-            chunk_size=DATA_CHUNK_SIZE,
             chacha=ChaCha20Poly1305(payload_key),
         )
 
@@ -83,37 +82,34 @@ class AgeWriter(io.BufferedIOBase):
         if self.closed:
             return None
 
-        return self._chacha_file.close()
+        return self._payload.close()
 
     @property
     def closed(self) -> bool:
         """True if the underlying fileobject is closed"""
-        return not self._chacha_file or self._chacha_file.closed
+        return not self._payload or self._payload.closed
 
     def writable(self) -> bool:
-        return self._chacha_file.writable()
+        return self._payload.writable()
 
     def write(self, buffer) -> int:
         # TODO in python 3.12: buffer: collections.abc.Buffer
         if self.closed:
             raise ValueError("I/O operation on closed file.")
 
-        return self._chacha_file.write(buffer)
+        return self._payload.write(buffer)
 
 
-class ChaChaFile(io.BufferedIOBase):
-    def __init__(
-        self, file: io.BufferedIOBase, chunk_size: int, chacha: ChaCha20Poly1305
-    ) -> None:
+class AgePayload(io.BufferedIOBase):
+    def __init__(self, file: io.IOBase, chacha: ChaCha20Poly1305) -> None:
         self._fileobj = file
         if self._fileobj.seekable():
             self._raw_offset = self._fileobj.seek(0, os.SEEK_CUR)
 
         self._chacha = chacha
 
-        self._chunk_size = chunk_size
         self._chunks_committed_so_far = 0
-        self._chunks: list[Chunk | None] = [Chunk(self._chunk_size)]
+        self._chunks: list[Chunk | None] = [Chunk(DATA_CHUNK_SIZE)]
         self._pos = 0
         self._size = 0
 
@@ -132,8 +128,8 @@ class ChaChaFile(io.BufferedIOBase):
 
         while (
             len(self._chunks) + self._chunks_committed_so_far
-        ) * self._chunk_size < self._pos:
-            self._chunks.append(Chunk(self._chunk_size))
+        ) * DATA_CHUNK_SIZE < self._pos:
+            self._chunks.append(Chunk(DATA_CHUNK_SIZE))
 
         self._size = max(self._size, self._pos)
 
@@ -146,7 +142,7 @@ class ChaChaFile(io.BufferedIOBase):
             # Rewind to first unwritten chunk
             self._fileobj.seek(
                 self._raw_offset
-                + (self._chunk_size + TAG_SIZE) * self._chunks_committed_so_far,
+                + (DATA_CHUNK_SIZE + TAG_SIZE) * self._chunks_committed_so_far,
                 os.SEEK_SET,
             )
 
@@ -171,7 +167,7 @@ class ChaChaFile(io.BufferedIOBase):
                 nonce=_nonce(
                     self._chunks_committed_so_far + len(self._chunks) - 1, last=True
                 ),
-                data=bytes(self._chunks[-1])[: self._size % self._chunk_size],
+                data=bytes(self._chunks[-1])[: self._size % DATA_CHUNK_SIZE],
                 associated_data=b"",
             ),
         )
@@ -203,21 +199,21 @@ class ChaChaFile(io.BufferedIOBase):
     def write1(self, buffer) -> int:
         if self.closed:
             raise ValueError("I/O operation on closed file.")
-        if self._pos // self._chunk_size < self._chunks_committed_so_far:
+        if self._pos // DATA_CHUNK_SIZE < self._chunks_committed_so_far:
             raise io.UnsupportedOperation("cannot seek to already committed chunk")
 
-        pos_in_chunk = self._pos % self._chunk_size
-        space_left_in_chunk = self._chunk_size - pos_in_chunk
+        pos_in_chunk = self._pos % DATA_CHUNK_SIZE
+        space_left_in_chunk = DATA_CHUNK_SIZE - pos_in_chunk
 
         buffer = buffer[:space_left_in_chunk]
         current_chunk = self._chunks[
-            self._pos // self._chunk_size - self._chunks_committed_so_far
+            self._pos // DATA_CHUNK_SIZE - self._chunks_committed_so_far
         ]
         assert current_chunk is not None
         current_chunk.write(pos_in_chunk, data=buffer)
 
         if current_chunk.full and len(self._chunks) > 1:
-            if self._pos // self._chunk_size == 0:
+            if self._pos // DATA_CHUNK_SIZE == 0:
                 writeall(
                     self._fileobj,
                     self._chacha.encrypt(
@@ -231,12 +227,12 @@ class ChaChaFile(io.BufferedIOBase):
 
             elif (
                 self._fileobj.seekable()
-                and (self._pos // self._chunk_size)
+                and (self._pos // DATA_CHUNK_SIZE)
                 < self._chunks_committed_so_far + len(self._chunks) - 1
             ):
                 assert isinstance(self._raw_offset, int)
                 self._fileobj.seek(
-                    (self._pos // self._chunk_size) * (self._chunk_size + TAG_SIZE)
+                    (self._pos // DATA_CHUNK_SIZE) * (DATA_CHUNK_SIZE + TAG_SIZE)
                     + self._raw_offset,
                     os.SEEK_SET,
                 )
@@ -249,11 +245,11 @@ class ChaChaFile(io.BufferedIOBase):
                     ),
                 )
                 self._chunks[
-                    self._pos // self._chunk_size - self._chunks_committed_so_far
+                    self._pos // DATA_CHUNK_SIZE - self._chunks_committed_so_far
                 ] = None
 
         if len(buffer) == space_left_in_chunk:
-            self._chunks.append(Chunk(self._chunk_size))
+            self._chunks.append(Chunk(DATA_CHUNK_SIZE))
         self._pos += len(buffer)
         self._size = max(self._size, self._pos)
 
@@ -267,7 +263,7 @@ def _nonce(counter: int, last: bool) -> bytes:
     return counter.to_bytes(11, "big") + (b"\1" if last else b"\0")
 
 
-def writeall(stream: io.BufferedIOBase, data: bytes) -> int:
+def writeall(stream: io.IOBase, data: bytes) -> int:
     """Write all of data to a stream, blocking until done."""
     written = 0
     while written < len(data):

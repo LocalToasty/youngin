@@ -233,6 +233,14 @@ class AgeReader(io.BufferedIOBase):
     def peek(self, size: int = 0) -> bytes:
         return self._buf[self._off : min(self._off + size, len(self._buf))]
 
+    def __len__(self) -> int:
+        if not self.seekable():
+            raise io.UnsupportedOperation(
+                "cannot determine length of a non-seekable file"
+            )
+
+        return self._file_len - self._payload_start
+
 
 def _nonce(counter: int, last: bool) -> bytes:
     return counter.to_bytes(11, "big") + (b"\1" if last else b"\0")

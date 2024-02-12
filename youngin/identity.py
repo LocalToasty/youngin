@@ -80,6 +80,13 @@ class Identity(Protocol):
         Returns `None` if the stanza's recipient does not match this identity.
         """
 
+    def recipient(self) -> Recipient:
+        """Generate a recipient from this identity
+
+        In some cases (like for example Scrypt identities) the recipient may
+        contain SENSITIVE INFORMATION and may not be freely shared.
+        """
+
 
 class X25519Recipient:
     """A X25519 recipient for an age file"""
@@ -261,3 +268,6 @@ class ScryptPassphrase:
             args=[b"scrypt", b64encode_no_pad(salt), str(work_factor_log2).encode()],
             body=body,
         )
+
+    def recipient(self) -> Self:
+        return self

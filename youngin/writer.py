@@ -89,6 +89,9 @@ class AgeWriter(io.BufferedIOBase):
         """True if the underlying fileobject is closed"""
         return not self._payload or self._payload.closed
 
+    def flush(self) -> None:
+        return self._payload.flush()
+
     def writable(self) -> bool:
         return self._payload.writable()
 

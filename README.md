@@ -109,6 +109,5 @@ $ youngin decrypt -i keyfile -o decrypted.txt encrypted.txt.age
 
 ## TODOs
 
-  - Recipient files in the CLI interface
   - Support for SSH ed25519 keys
   - Simultaneous read-write support

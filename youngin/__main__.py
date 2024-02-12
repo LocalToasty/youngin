@@ -57,6 +57,21 @@ def main() -> None:
         action="append",
     )
     encrypt_parser.add_argument(
+        "--recipients-file",
+        "-R",
+        metavar="PATH",
+        dest="recipients",
+        type=lambda p: list(X25519Recipient.from_recipient_file(p)),
+        default=None,
+        action="append",
+    )
+    encrypt_parser.add_argument(
+        "--passphrase",
+        "-p",
+        dest="read_passphrase",
+        action="store_true",
+    )
+    encrypt_parser.add_argument(
         "infile",
         metavar="INPUT",
         type=FileType("rb"),
@@ -106,7 +121,10 @@ def main() -> None:
 
         case "encrypt":
             encrypt_(
-                recipients=args.recipients, infile=args.infile, outfile=args.outfile
+                recipients=args.recipients,
+                read_passphrase=args.read_passphrase,
+                infile=args.infile,
+                outfile=args.outfile,
             )
 
         case "decrypt":
@@ -127,19 +145,34 @@ def keygen_(outfile: TextIO) -> None:
 
 
 def encrypt_(
-    recipients: Iterable[Recipient],
+    recipients: Iterable[Recipient | Iterable[Recipient]],
+    read_passphrase: bool,
     infile: BinaryIO,
     outfile: io.BufferedIOBase,
 ) -> None:
     """Encrypt a file"""
-    if not recipients:
+    flattened_recipients: list[Recipient] = []
+    for recipient in recipients:
+        if isinstance(recipient, Recipient):
+            flattened_recipients.append(recipient)
+        else:
+            flattened_recipients += recipient
+
+    if read_passphrase:
+        if flattened_recipients:
+            raise RuntimeError(
+                "passphrase cannot be set in conjunction with recipients"
+            )
         # Ask for passphrase
         passphrase = getpass("Enter passphrase: ")
         if passphrase != getpass("Confirm passphrase: "):
             raise RuntimeError("passphrases didn't match")
-        recipients = [ScryptPassphrase(passphrase=passphrase.encode())]
+        flattened_recipients = [ScryptPassphrase(passphrase=passphrase.encode())]
 
-    with AgeWriter(outfile, recipients=recipients) as agewriter:
+    if not flattened_recipients:
+        raise RuntimeError("either a recipient or a passphrase has to be specified")
+
+    with AgeWriter(outfile, recipients=flattened_recipients) as agewriter:
         while chunk := infile.read(DATA_CHUNK_SIZE):
             agewriter.write(chunk)
 

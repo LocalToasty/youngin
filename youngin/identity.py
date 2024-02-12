@@ -3,6 +3,7 @@
 import io
 import re
 import secrets
+from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from pathlib import Path
 from typing import NewType, Optional, Protocol, Self, Sequence
@@ -62,24 +63,27 @@ class Stanza:
 FileKey = NewType("FileKey", bytes)
 
 
-class Recipient(Protocol):
+class Recipient(ABC):
     """A recipient of an age-encrypted file"""
 
     # pylint: disable=too-few-public-methods
+    @abstractmethod
     def stanza(self, file_key: FileKey) -> Stanza:
         """Returns a stanza describing this recipient."""
 
 
-class Identity(Protocol):
+class Identity(ABC):
     """The identity of a person an age message is addressed to"""
 
     # pylint: disable=too-few-public-methods
+    @abstractmethod
     def decode(self, stanza: Stanza) -> Optional[FileKey]:
         """Extract the file key from a stanza.
 
         Returns `None` if the stanza's recipient does not match this identity.
         """
 
+    @abstractmethod
     def recipient(self) -> Recipient:
         """Generate a recipient from this identity
 
@@ -88,7 +92,7 @@ class Identity(Protocol):
         """
 
 
-class X25519Recipient:
+class X25519Recipient(Recipient):
     """A X25519 recipient for an age file"""
 
     def __init__(self, recipient: X25519PublicKey) -> None:
@@ -101,8 +105,29 @@ class X25519Recipient:
             X25519PublicKey.from_public_bytes(bech32_decode("age", age_recipient))
         )
 
+    @classmethod
+    def from_recipient_file(
+        cls, recipient_file: io.IOBase | Path | str
+    ) -> Iterable[Self]:
+        """Read X25519 recipients from a recipient file.
+
+        Each line in the recipient file has to contain an X25519 recipient
+        public key.  Empty lines and lines starting with `#` are ignored.
+        """
+        if isinstance(recipient_file, (Path, str)):
+            recipient_file = open(recipient_file, "rb")
+
+        return [
+            cls.from_public_key(line.strip().decode())
+            for line in recipient_file
+            if not line.startswith(b"#") and line.strip()
+        ]
+
     def __str__(self) -> str:
         return bech32_encode("age", self._recipient.public_bytes_raw())
+
+    def __repr__(self) -> str:
+        return f"<X25519Recipient {self}>"
 
     def stanza(self, file_key: FileKey) -> Stanza:
         ephemeral_secret = X25519PrivateKey.generate()
@@ -127,7 +152,7 @@ class X25519Recipient:
         )
 
 
-class X25519Identity:
+class X25519Identity(Identity):
     def __init__(self, identity: X25519PrivateKey) -> None:
         self._identity = identity
 
@@ -205,7 +230,6 @@ class X25519Identity:
         else:
             keyfile = file
 
-        # FIXME crashes here
         return [
             cls.from_secret_key(line.strip().decode())
             for line in keyfile
@@ -213,7 +237,7 @@ class X25519Identity:
         ]
 
 
-class ScryptPassphrase:
+class ScryptPassphrase(Recipient, Identity):
     def __init__(self, passphrase: bytes) -> None:
         self._passphrase = passphrase
 

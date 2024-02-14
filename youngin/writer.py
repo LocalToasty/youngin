@@ -73,7 +73,7 @@ class AgeWriter(io.BufferedIOBase):
         writeall(file, b" " + b64encode_no_pad(digest) + b"\n")
         writeall(file, payload_nonce)
 
-        self._payload = AgePayload(
+        self._payload: AgePayload | None = AgePayload(
             file,
             chacha=ChaCha20Poly1305(payload_key),
         )
@@ -82,33 +82,46 @@ class AgeWriter(io.BufferedIOBase):
         if self.closed:
             return None
 
-        return self._payload.close()
+        if self._payload:
+            self._payload.close()
+        return
 
     @property
     def closed(self) -> bool:
         """True if the underlying fileobject is closed"""
         return not self._payload or self._payload.closed
 
-    def flush(self) -> None:
-        return self._payload.flush()
+    def detach(self) -> io.RawIOBase:
+        # TODO Technically not type-correct
+        return self._detach()  # type: ignore[return-value]
+
+    def _detach(self) -> io.IOBase:
+        if not self._payload:
+            raise RuntimeError("cannot detach already detached stream")
+
+        raw = self._payload.detach()
+        self._payload = None
+        return raw
 
     def writable(self) -> bool:
-        return self._payload.writable()
+        return self._payload is not None and self._payload.writable()
 
     def write(self, buffer) -> int:
         # TODO in python 3.12: buffer: collections.abc.Buffer
-        if self.closed:
-            raise ValueError("I/O operation on closed file.")
+        if self.closed or not self._payload:
+            raise ValueError("I/O operation on closed or detached file.")
+        assert self._payload
 
         return self._payload.write(buffer)
 
     def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
+        assert self._payload
         return self._payload.seek(offset, whence)
 
 
 class AgePayload(io.BufferedIOBase):
     def __init__(self, file: io.IOBase, chacha: ChaCha20Poly1305) -> None:
-        self._fileobj = file
+        self._fileobj: io.IOBase | None = file
         if self._fileobj.seekable():
             self._raw_offset = self._fileobj.seek(0, os.SEEK_CUR)
 
@@ -144,6 +157,22 @@ class AgePayload(io.BufferedIOBase):
     def close(self) -> None:
         if self.closed:
             return
+        assert self._fileobj
+
+        fileobj = self._detach()
+        fileobj.close()
+
+    @property
+    def closed(self) -> bool:
+        return self._fileobj is None or self._fileobj.closed
+
+    def detach(self) -> io.RawIOBase:
+        # TODO Technically not type-correct
+        return self._detach()  # type: ignore[return-value]
+
+    def _detach(self) -> io.IOBase:
+        if self.closed or not self._fileobj:
+            raise ValueError("I/O operation on closed or detached file.")
         if self._fileobj.seekable():
             # Rewind to first unwritten chunk
             self._fileobj.seek(
@@ -178,11 +207,9 @@ class AgePayload(io.BufferedIOBase):
             ),
         )
 
-        self._fileobj.close()
-
-    @property
-    def closed(self) -> bool:
-        return self._fileobj.closed
+        raw = self._fileobj
+        self._fileobj = None
+        return raw
 
     def seekable(self) -> bool:
         return True
@@ -203,8 +230,9 @@ class AgePayload(io.BufferedIOBase):
         return written
 
     def write1(self, buffer) -> int:
-        if self.closed:
-            raise ValueError("I/O operation on closed file.")
+        if self.closed or not self._fileobj:
+            raise ValueError("I/O operation on closed or detached file.")
+
         if self._pos // DATA_CHUNK_SIZE < self._chunks_committed_so_far:
             raise RuntimeError("cannot seek to already committed chunk")
 
@@ -262,7 +290,7 @@ class AgePayload(io.BufferedIOBase):
         return len(buffer)
 
     def writable(self) -> bool:
-        return self._fileobj.writable()
+        return self._fileobj is not None and self._fileobj.writable()
 
 
 def _nonce(counter: int, last: bool) -> bytes:

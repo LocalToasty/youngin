@@ -1,6 +1,5 @@
 import io
 import unittest
-from pathlib import Path
 
 from youngin import AgeReader, AgeWriter, ScryptPassphrase, X25519Identity
 

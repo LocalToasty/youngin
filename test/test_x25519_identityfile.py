@@ -1,10 +1,7 @@
 import io
-import os
 import unittest
-from pathlib import Path
-from tempfile import TemporaryDirectory, TemporaryFile
 
-from youngin import AgeReader, AgeWriter, X25519Identity
+from youngin import AgeWriter, X25519Identity
 
 
 class TestX25519IdentityFile(unittest.TestCase):

@@ -117,33 +117,35 @@ class AgeReader(io.BufferedIOBase):
         match whence:
             case os.SEEK_SET:
                 # Seek from start of file
-                self._counter = offset // DATA_CHUNK_SIZE
-                off = offset % DATA_CHUNK_SIZE
+                target_counter = offset // DATA_CHUNK_SIZE
+                target_off = offset % DATA_CHUNK_SIZE
             case os.SEEK_CUR:
                 # Seek from current position
-                self._counter = self._counter + offset // DATA_CHUNK_SIZE
-                off = (self._off + offset) % DATA_CHUNK_SIZE
+                target_counter = self._counter + offset // DATA_CHUNK_SIZE
+                target_off = (self._off + offset) % DATA_CHUNK_SIZE
             case os.SEEK_END:
                 # Seek from end of file
-                self._counter = (self._cleartext_len + offset) // DATA_CHUNK_SIZE
-                off = (self._cleartext_len + offset) % DATA_CHUNK_SIZE
+                target_counter = (self._cleartext_len + offset) // DATA_CHUNK_SIZE
+                target_off = (self._cleartext_len + offset) % DATA_CHUNK_SIZE
             case _:
                 raise NotImplementedError()
 
         self._fileobj.seek(
-            pos := self._payload_start + self._counter * ENCRYPTED_CHUNK_SIZE
+            pos := self._payload_start + target_counter * ENCRYPTED_CHUNK_SIZE
         )
         self._buf, self._off = b"", 0
+        self._counter = target_counter
 
         self._eof = pos >= self._file_len
         if self._eof and self._counter == 0:
             raise PayloadFailureException("no chunks")
 
-        if off > 0:
+        if target_off > 0:
             # We have to read a little bit to reach the middle of the chunk
-            self.read(off)
+            self.read(target_off)
 
-        return self._counter * DATA_CHUNK_SIZE + self._off
+        # DON'T USE ANY NON-LOCAL OBJECT STATE HERE, self.read MAY HAVE CHANGED IT
+        return target_counter * DATA_CHUNK_SIZE + target_off
 
     def read1(self, size: int = -1) -> bytes:
         if self.closed:

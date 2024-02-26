@@ -133,7 +133,7 @@ class AgeReader(io.BufferedIOBase):
         self._fileobj.seek(
             pos := self._payload_start + target_counter * ENCRYPTED_CHUNK_SIZE
         )
-        self._buf, self._off = b"", 0
+        self._next_encrypted_chunk, self._buf, self._off = b"", b"", 0
         self._counter = target_counter
 
         self._eof = pos >= self._file_len
@@ -144,7 +144,8 @@ class AgeReader(io.BufferedIOBase):
             # We have to read a little bit to reach the middle of the chunk
             self.read(target_off)
 
-        # DON'T USE ANY NON-LOCAL OBJECT STATE HERE, self.read MAY HAVE CHANGED IT
+        # DON'T USE ANY NON-LOCAL OBJECT STATE HERE,
+        # self.read MAY HAVE CHANGED IT
         return target_counter * DATA_CHUNK_SIZE + target_off
 
     def read1(self, size: int = -1) -> bytes:

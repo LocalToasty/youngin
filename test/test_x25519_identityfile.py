@@ -14,7 +14,7 @@ class TestX25519IdentityFile(unittest.TestCase):
             b"""# and a final key\n"""
             b"""AGE-SECRET-KEY-1VPYTK3RPTRJ7RU0PCFT59Y37S0AF82AL03R5F0PSJV80LWUVPPMSP8YFVU"""
         )
-        identities = X25519Identity.from_keyfile(identity_file)
+        identities = list(X25519Identity.from_keyfile(identity_file))
         self.assertEqual(len(identities), 3)
         self.assertEqual(
             str(identities[0]),
@@ -39,8 +39,8 @@ class TestX25519IdentityFile(unittest.TestCase):
             writer.write(identitiy_str.encode())
 
         agefile.seek(0)
-        identities = X25519Identity.from_keyfile(
-            agefile, identities=[encryption_identity]
+        identities = list(
+            X25519Identity.from_keyfile(agefile, identities=[encryption_identity])
         )
         self.assertEqual(len(identities), 1)
         self.assertEqual(str(identities[0]), identitiy_str)

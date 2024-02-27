@@ -142,6 +142,10 @@ class AgePayload(io.BufferedIOBase):
                 new_pos = self._pos + offset
             case os.SEEK_END:
                 new_pos = max(self._size + offset, 0)
+            case _:
+                raise NotImplementedError(
+                    "Only SEEK_SET, SEEK_CUR and SEEK_END are implemented for AgeWriter"
+                )
 
         self._pos = new_pos
 

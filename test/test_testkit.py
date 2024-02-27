@@ -63,7 +63,7 @@ def run_testkit_test(
     file: io.IOBase,
     identities: Iterable[Identity],
     armored: bool,
-    expected_exception: type | None,
+    expected_exception: type[BaseException] | None,
 ) -> None:
 
     if armored:
@@ -71,7 +71,7 @@ def run_testkit_test(
         return
 
     chunks = []
-    if expected_exception:
+    if expected_exception is not None:
         with self.assertRaises(expected_exception):
             agereader = AgeReader(file, identities=identities)
             while chunk := agereader.read():

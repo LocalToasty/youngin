@@ -36,7 +36,7 @@ class AgeReader(io.BufferedIOBase):
             self._stream_passed = False
             """False if the underlying stream was not passed as a file object,
             but as a path"""
-            self._fileobj: io.IOBase = open(file, "rb")
+            self._fileobj: io.IOBase | None = open(file, "rb")
         else:
             self._stream_passed = True
             self._fileobj = file
@@ -100,6 +100,10 @@ class AgeReader(io.BufferedIOBase):
             self.seek(0, os.SEEK_SET)
 
     def close(self) -> None:
+        if self.closed:
+            return
+        assert self._fileobj is not None
+
         # Delete all attributes which may contain sensitive data
         del self._payload_chacha, self._buf, self._off, self._counter
 
@@ -114,11 +118,13 @@ class AgeReader(io.BufferedIOBase):
     def seekable(self) -> bool:
         if self.closed:
             raise ValueError("I/O operation on closed file.")
+        assert self._fileobj is not None
         return self._fileobj.seekable()
 
     def seek(self, offset: int, whence: int = 0) -> int:
         if self.closed:
             raise ValueError("I/O operation on closed file.")
+        assert self._fileobj is not None
 
         match whence:
             case os.SEEK_SET:
@@ -157,6 +163,7 @@ class AgeReader(io.BufferedIOBase):
     def read1(self, size: int = -1) -> bytes:
         if self.closed:
             raise ValueError("I/O operation on closed file.")
+        assert self._fileobj is not None
 
         if self._eof:
             return b""
@@ -234,7 +241,7 @@ class AgeReader(io.BufferedIOBase):
         return b"".join(parts)
 
     def readable(self) -> bool:
-        return self._fileobj.readable()
+        return self._fileobj is not None and self._fileobj.readable()
 
     def tell(self) -> int:
         return (self._counter - 1) * DATA_CHUNK_SIZE + self._off

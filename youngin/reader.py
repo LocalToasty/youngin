@@ -27,6 +27,8 @@ ENCRYPTED_CHUNK_SIZE = DATA_CHUNK_SIZE + TAG_SIZE
 
 
 class AgeReader(io.BufferedIOBase):
+    """A reader for age-encrypted files"""
+
     def __init__(
         self,
         file: io.IOBase | Path | str,
@@ -36,6 +38,7 @@ class AgeReader(io.BufferedIOBase):
             self._stream_passed = False
             """False if the underlying stream was not passed as a file object,
             but as a path"""
+            # pylint: disable=consider-using-with
             self._fileobj: io.IOBase | None = open(file, "rb")
         else:
             self._stream_passed = True
@@ -113,6 +116,7 @@ class AgeReader(io.BufferedIOBase):
 
     @property
     def closed(self):
+        """Returns `True` if the stream has been closed."""
         return self._fileobj is None or self._fileobj.closed
 
     def seekable(self) -> bool:
@@ -247,6 +251,8 @@ class AgeReader(io.BufferedIOBase):
         return (self._counter - 1) * DATA_CHUNK_SIZE + self._off
 
     def peek(self, size: int = 0) -> bytes:
+        """Returns the next at most `size` bytes from the stream without
+        consuming them"""
         return self._buf[self._off : min(self._off + size, len(self._buf))]
 
     def __len__(self) -> int:

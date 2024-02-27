@@ -8,10 +8,12 @@ from .exceptions import HeaderFailureException
 
 
 def b64encode_no_pad(s: bytes) -> bytes:
+    """Encode bytes to base64 without padding."""
     return base64.b64encode(s)[: (len(s) * 8 + 5) // 6]
 
 
 def b64decode_no_pad(b: bytes) -> bytes:
+    """Decodes a base64 string without padding."""
     if b.endswith(b"="):
         raise HeaderFailureException("padding in base64 not allowed")
     if len(b) % 4 == 0:
@@ -25,12 +27,14 @@ def b64decode_no_pad(b: bytes) -> bytes:
 
 
 def bech32_encode(hrp: str, data: bytes) -> str:
+    """Encode data to bech32."""
     base32 = bech32.convertbits(data, frombits=8, tobits=5)
     assert base32 is not None
     return bech32.bech32_encode(hrp, data=base32)
 
 
 def bech32_decode(hrp: str, data: str) -> bytes:
+    """Decode bech32 encoded data."""
     hrpgot, decoded_data = bech32.bech32_decode(data)
     assert hrpgot == hrp
     assert decoded_data is not None

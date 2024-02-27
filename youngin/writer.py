@@ -62,6 +62,7 @@ class AgeWriter(io.BufferedIOBase):
         header_parts.append(b"---")
         header_bytes = b"\n".join(header_parts)
 
+        # pylint: disable=duplicate-code
         hmac_hkdf = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
@@ -85,7 +86,7 @@ class AgeWriter(io.BufferedIOBase):
 
     def close(self) -> None:
         if self.closed:
-            return None
+            return
 
         if self._stream_passed:
             self._payload.detach()
@@ -120,6 +121,15 @@ class AgeWriter(io.BufferedIOBase):
 
 
 class AgePayload(io.BufferedIOBase):
+    """Helper class for writing age files.
+
+    Since we may not reuse nonces, we have to data until a full chunk (64KiB)
+    has been written.  This class waits for chunks to be completely written
+    before writing them into the underlying stream.  If the underlying stream is
+    not seekable, it furthermore buffers complete chunks until all previous
+    chunks have been written.
+    """
+
     def __init__(self, file: io.IOBase, chacha: ChaCha20Poly1305) -> None:
         self._fileobj: io.IOBase | None = file
         if self._fileobj.seekable():
@@ -168,6 +178,7 @@ class AgePayload(io.BufferedIOBase):
 
     @property
     def closed(self) -> bool:
+        """Returns true if file has been closed."""
         return self._fileobj is None or self._fileobj.closed
 
     def detach(self) -> io.RawIOBase:
@@ -237,6 +248,11 @@ class AgePayload(io.BufferedIOBase):
         return written
 
     def write1(self, buffer) -> int:
+        """Writes buffer while calling write of the underlying stream at most once.
+
+        Returns:
+            The number of bytes written.
+        """
         if self.closed or not self._fileobj:
             raise ValueError("I/O operation on closed or detached file.")
 
@@ -328,6 +344,15 @@ class Chunk:
         """
 
     def write(self, start: int, data: bytes) -> None:
+        """Writes data to this chunk.
+
+        Args:
+            start:  position in the chunk to write the data to
+            data:  data to write
+
+        Already written data may not be written to again.  Furthermore the data
+        has to fit into the remainder of the chunk.
+        """
         pos = 0
         for extent_i, extent in enumerate(self._extents):
             if pos + len(extent) > start:
@@ -335,8 +360,8 @@ class Chunk:
                 if not isinstance(extent, Zeros) or len(extent) < len(data):
                     raise RuntimeError("can't overwrite already written data")
                 break
-            else:
-                pos += len(extent)
+
+            pos += len(extent)
         else:
             raise RuntimeError("unreachable")
 
@@ -377,11 +402,13 @@ class Chunk:
 
     @property
     def empty(self) -> bool:
+        """Turns true if this chunk has not yet been written to"""
         return (len(self._extents) == 1) and isinstance(self._extents[0], Zeros)
 
     @property
     def full(self) -> bool:
-        """True if the entire block has been written to"""
+        """True if the entire block has been written to
+        (and may thus be written to the underlying stream)"""
         return (len(self._extents) == 1) and isinstance(self._extents[0], Data)
 
     def __bytes__(self) -> bytes:
@@ -393,6 +420,8 @@ class Chunk:
 
 @dataclass
 class Data:
+    """An extent containing data (which may thus not be overwritten)"""
+
     data: bytes
 
     def __len__(self) -> int:
@@ -407,6 +436,8 @@ class Data:
 
 @dataclass
 class Zeros:
+    """An as-of-yet not written to extent (assumed to be all zeroes)"""
+
     size: int
 
     def __len__(self):

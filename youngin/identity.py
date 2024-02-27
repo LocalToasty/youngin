@@ -1,6 +1,5 @@
 """Native identity and recipient implementations for age"""
 
-import base64
 import io
 import re
 import secrets
@@ -117,6 +116,7 @@ class X25519Recipient(Recipient):
         public key.  Empty lines and lines starting with `#` are ignored.
         """
         if isinstance(recipient_file, (Path, str)):
+            # pylint: disable=consider-using-with
             recipient_file = open(recipient_file, "rb")
 
         return [
@@ -155,6 +155,8 @@ class X25519Recipient(Recipient):
 
 
 class X25519Identity(Identity):
+    """An identity based on a ed25519 key"""
+
     def __init__(self, identity: X25519PrivateKey) -> None:
         self._identity = identity
 
@@ -165,6 +167,7 @@ class X25519Identity(Identity):
 
     @classmethod
     def from_secret_key(cls, age_secret_key: str) -> Self:
+        """Construct identity from bech32-encoded age secret key."""
         identity = bech32_decode("age-secret-key-", age_secret_key)
         return cls(X25519PrivateKey.from_private_bytes(identity))
 
@@ -187,7 +190,7 @@ class X25519Identity(Identity):
             An iterable of identities stored in the keyfile.
         """
         if isinstance(file, (Path, str)):
-            file = open(file, "rb")
+            file = open(file, "rb")  # pylint: disable=consider-using-with
 
         magic = file.read(len(b"age-encryption.org/v1"))
         file.seek(0)  # TODO make seek-less
@@ -198,6 +201,7 @@ class X25519Identity(Identity):
                 identities = [ScryptPassphrase(passphrase.encode())]
             if not identities:
                 raise RuntimeError("no age key to decrypt keyfile supplied")
+            # pylint: disable=cyclic-import,import-outside-toplevel
             from .reader import AgeReader
 
             keyfile = AgeReader(file, identities)
@@ -228,7 +232,7 @@ class X25519Identity(Identity):
                 X25519PublicKey.from_public_bytes(ephemeral_share)
             )
         except ValueError as e:
-            raise HeaderFailureException(e)
+            raise HeaderFailureException(e) from e
 
         kdf = HKDF(
             algorithm=hashes.SHA256(),
@@ -256,6 +260,8 @@ class X25519Identity(Identity):
 
 
 class ScryptPassphrase(Recipient, Identity):
+    """An identity / recipient based on a passphrase."""
+
     def __init__(self, passphrase: bytes) -> None:
         self._passphrase = passphrase
 

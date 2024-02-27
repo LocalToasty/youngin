@@ -24,8 +24,6 @@ class TestWriter(unittest.TestCase):
             self.assertEqual(pos, 3 + len(b"hello") + 10 - 8)
             writer.write(b"world")
 
-            writer.detach()
-
         agefile.seek(0)
         with AgeReader(agefile, identities=[identity]) as reader:
             decrypted = reader.read()

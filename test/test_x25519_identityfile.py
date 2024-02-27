@@ -37,7 +37,6 @@ class TestX25519IdentityFile(unittest.TestCase):
         agefile = io.BytesIO()
         with AgeWriter(agefile, recipients=[encryption_identity.recipient()]) as writer:
             writer.write(identitiy_str.encode())
-            writer.detach()
 
         agefile.seek(0)
         identities = X25519Identity.from_keyfile(

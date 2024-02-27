@@ -30,9 +30,14 @@ class AgeWriter(io.BufferedIOBase):
         *,
         recipients: Iterable[Recipient],
     ) -> None:
-        # pylint: disable=consider-using-with
         if isinstance(file, (Path, str)):
+            self._stream_passed = False
+            """False if the underlying stream was not passed as a file object,
+            but as a path"""
+            # pylint: disable=consider-using-with
             file = open(file, "wb")
+        else:
+            self._stream_passed = True
 
         header_parts = [b"age-encryption.org/v1"]
 
@@ -73,7 +78,7 @@ class AgeWriter(io.BufferedIOBase):
         writeall(file, b" " + b64encode_no_pad(digest) + b"\n")
         writeall(file, payload_nonce)
 
-        self._payload: AgePayload | None = AgePayload(
+        self._payload = AgePayload(
             file,
             chacha=ChaCha20Poly1305(payload_key),
         )
@@ -82,40 +87,35 @@ class AgeWriter(io.BufferedIOBase):
         if self.closed:
             return None
 
-        if self._payload:
+        if self._stream_passed:
+            self._payload.detach()
+        else:
             self._payload.close()
-        return
 
     @property
     def closed(self) -> bool:
         """True if the underlying fileobject is closed"""
-        return not self._payload or self._payload.closed
+        return self._payload.closed
 
     def detach(self) -> io.RawIOBase:
         # TODO Technically not type-correct
         return self._detach()  # type: ignore[return-value]
 
     def _detach(self) -> io.IOBase:
-        if not self._payload:
-            raise RuntimeError("cannot detach already detached stream")
-
         raw = self._payload.detach()
-        self._payload = None
         return raw
 
     def writable(self) -> bool:
-        return self._payload is not None and self._payload.writable()
+        return self._payload.writable()
 
     def write(self, buffer) -> int:
         # TODO in python 3.12: buffer: collections.abc.Buffer
-        if self.closed or not self._payload:
+        if self.closed:
             raise ValueError("I/O operation on closed or detached file.")
-        assert self._payload
 
         return self._payload.write(buffer)
 
     def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
-        assert self._payload
         return self._payload.seek(offset, whence)
 
 
@@ -168,9 +168,12 @@ class AgePayload(io.BufferedIOBase):
 
     def detach(self) -> io.RawIOBase:
         # TODO Technically not type-correct
+        # because the underlying stream can be a non-raw one
         return self._detach()  # type: ignore[return-value]
 
     def _detach(self) -> io.IOBase:
+        """Flushes all data not-yet-written to underyling stream and returns it"""
+
         if self.closed or not self._fileobj:
             raise ValueError("I/O operation on closed or detached file.")
         if self._fileobj.seekable():

@@ -33,8 +33,12 @@ class AgeReader(io.BufferedIOBase):
         identities: Iterable[Identity],
     ) -> None:
         if isinstance(file, (Path, str)):
+            self._stream_passed = False
+            """False if the underlying stream was not passed as a file object,
+            but as a path"""
             self._fileobj: io.IOBase = open(file, "rb")
         else:
+            self._stream_passed = True
             self._fileobj = file
 
         stanzas, header_lines, header_hmac = _parse_header(self._fileobj)
@@ -99,11 +103,13 @@ class AgeReader(io.BufferedIOBase):
         # Delete all attributes which may contain sensitive data
         del self._payload_chacha, self._buf, self._off, self._counter
 
-        return self._fileobj.close()
+        if not self._stream_passed:
+            self._fileobj.close()
+        self._fileobj = None
 
     @property
     def closed(self):
-        return self._fileobj.closed or not self._fileobj
+        return self._fileobj is None or self._fileobj.closed
 
     def seekable(self) -> bool:
         if self.closed:

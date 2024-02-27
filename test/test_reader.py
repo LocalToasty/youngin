@@ -14,7 +14,6 @@ class TestReader(unittest.TestCase):
         agefile = io.BytesIO()
         with AgeWriter(agefile, recipients=[identity.recipient()]) as writer:
             writer.write(b"Hello, beautiful world!")
-            writer.detach()
 
         agefile.seek(0)
         with AgeReader(agefile, identities=[identity]) as reader:
@@ -38,7 +37,6 @@ class TestReader(unittest.TestCase):
         with AgeWriter(agefile, recipients=[identity.recipient()]) as writer:
             for _ in range(2**16):  # roughly three chunks
                 writer.write(b"abc")
-            writer.detach()
 
         agefile.seek(0)
         with AgeReader(agefile, identities=[identity]) as reader:

@@ -12,13 +12,13 @@ class TestTextIOWrapper(unittest.TestCase):
         )
         agefile = io.BytesIO()
         with AgeWriter(agefile, recipients=[identity.recipient()]) as writer:
-            with io.TextIOWrapper(writer) as textwriter:  # type: ignore[reportArgumentType]
+            with io.TextIOWrapper(writer) as textwriter:
                 textwriter.write("Hello, world")
 
         agefile.seek(0)
 
         with AgeReader(agefile, identities=[identity]) as reader:
-            with io.TextIOWrapper(reader) as textreader:  # type: ignore[reportArgumentType]
+            with io.TextIOWrapper(reader) as textreader:
                 decrypted = textreader.read()
 
         self.assertEqual(decrypted, "Hello, world")

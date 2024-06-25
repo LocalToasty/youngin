@@ -131,18 +131,19 @@ class AgePayload(io.BufferedIOBase):
     """
 
     def __init__(self, file: io.IOBase, chacha: ChaCha20Poly1305) -> None:
+
+        # `None` because `detach()` unsets `_fileobj``
         self._fileobj: io.IOBase | None = file
         if self._fileobj.seekable():
             self._raw_offset = self._fileobj.seek(0, os.SEEK_CUR)
+        else:
+            self._raw_offset = None
 
         self._chacha = chacha
 
         self._chunks_committed_so_far = 0
         # The chunks of the file starting from the `_chunks_commited_so_far`th one.
-        # If the underlying stream is seekable,
-        # fully-written in-between chunks may be flushed.
-        # In that case, that chunk is `None`
-        self._chunks: list[Chunk | None] = [Chunk(DATA_CHUNK_SIZE)]
+        self._chunks: list[Chunk] = [Chunk(DATA_CHUNK_SIZE)]
 
         # The current position in the file,
         # i.e. where stuff will be written to next
@@ -203,6 +204,9 @@ class AgePayload(io.BufferedIOBase):
             raise ValueError("I/O operation on closed or detached file.")
         if self._fileobj.seekable():
             # Rewind to first unwritten chunk
+            assert (
+                self._raw_offset is not None
+            ), "`_raw_offset` should have been set in the constructor if the underlying stream is seekable"
             self._fileobj.seek(
                 self._raw_offset
                 + (DATA_CHUNK_SIZE + TAG_SIZE) * self._chunks_committed_so_far,
@@ -210,20 +214,15 @@ class AgePayload(io.BufferedIOBase):
             )
 
         for i, chunk in enumerate(self._chunks[:-1]):
-            if chunk is None:
-                assert self._fileobj.seekable()
-                self.seek(ENCRYPTED_CHUNK_SIZE, os.SEEK_CUR)
-            else:
-                writeall(
-                    self._fileobj,
-                    self._chacha.encrypt(
-                        nonce=_nonce(self._chunks_committed_so_far + i, last=False),
-                        data=bytes(chunk),
-                        associated_data=b"",
-                    ),
-                )
+            writeall(
+                self._fileobj,
+                self._chacha.encrypt(
+                    nonce=_nonce(self._chunks_committed_so_far + i, last=False),
+                    data=bytes(chunk),
+                    associated_data=b"",
+                ),
+            )
 
-        assert self._chunks[-1] is not None
         writeall(
             self._fileobj,
             self._chacha.encrypt(
@@ -267,7 +266,8 @@ class AgePayload(io.BufferedIOBase):
             raise ValueError("I/O operation on closed or detached file.")
 
         if self._pos // DATA_CHUNK_SIZE < self._chunks_committed_so_far:
-            raise RuntimeError("cannot seek to already committed chunk")
+            # The chunk is already commited, i.e. has already been written to
+            raise RuntimeError("cannot overwrite already written data")
 
         pos_in_chunk = self._pos % DATA_CHUNK_SIZE
         space_left_in_chunk = DATA_CHUNK_SIZE - pos_in_chunk
@@ -276,11 +276,26 @@ class AgePayload(io.BufferedIOBase):
         current_chunk = self._chunks[
             self._pos // DATA_CHUNK_SIZE - self._chunks_committed_so_far
         ]
-        assert current_chunk is not None
         current_chunk.write(pos_in_chunk, data=buffer)
 
-        # TODO make more efficient
-        # Currently we're just writing full chunks left-to-right
+        self._commit_fully_written_chunks()
+
+        if len(buffer) == space_left_in_chunk:
+            # We've reached the end of this chunk,
+            # time to append a new one!
+            self._chunks.append(Chunk(DATA_CHUNK_SIZE))
+        self._pos += len(buffer)
+        self._size = max(self._size, self._pos)
+
+        return len(buffer)
+
+    def _commit_fully_written_chunks(self) -> None:
+        """Commits all already fully written chunks from on the left end of the file"""
+
+        assert (
+            self._fileobj != None
+        ), "the caller must ensure that the stream has not been detached"
+
         while len(self._chunks) > 1:
             chunk = self._chunks[0]
             if chunk.full:
@@ -297,37 +312,6 @@ class AgePayload(io.BufferedIOBase):
             else:
                 # We've encountered the first none-full chunk, so let's stop for now
                 break
-
-            # elif self._fileobj.seekable() and (
-            #     self._pos // DATA_CHUNK_SIZE
-            #     < self._chunks_committed_so_far + len(self._chunks) - 1
-            # ):
-            #     assert isinstance(self._raw_offset, int)
-            #     self._fileobj.seek(
-            #         (self._pos // DATA_CHUNK_SIZE) * (DATA_CHUNK_SIZE + TAG_SIZE)
-            #         + self._raw_offset,
-            #         os.SEEK_SET,
-            #     )
-            #     writeall(
-            #         self._fileobj,
-            #         self._chacha.encrypt(
-            #             nonce=_nonce(self._chunks_committed_so_far, last=False),
-            #             data=bytes(current_chunk),
-            #             associated_data=b"",
-            #         ),
-            #     )
-            #     self._chunks[
-            #         self._pos // DATA_CHUNK_SIZE - self._chunks_committed_so_far
-            #     ] = None
-
-        if len(buffer) == space_left_in_chunk:
-            # We've reached the end of this chunk,
-            # time to append a new one!
-            self._chunks.append(Chunk(DATA_CHUNK_SIZE))
-        self._pos += len(buffer)
-        self._size = max(self._size, self._pos)
-
-        return len(buffer)
 
     def writable(self) -> bool:
         return self._fileobj is not None and self._fileobj.writable()

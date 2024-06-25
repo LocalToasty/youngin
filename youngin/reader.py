@@ -34,6 +34,8 @@ class AgeReader(io.BufferedIOBase):
         file: io.IOBase | Path | str,
         identities: Iterable[Identity],
     ) -> None:
+        self.name = file  # To adhere to the WrappedBuffer protocol
+
         if isinstance(file, (Path, str)):
             self._stream_passed = False
             """False if the underlying stream was not passed as a file object,

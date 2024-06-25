@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from .binascii import b64encode_no_pad
 from .identity import Recipient, ScryptPassphrase
-from .reader import DATA_CHUNK_SIZE, ENCRYPTED_CHUNK_SIZE, TAG_SIZE, FileKey
+from .reader import DATA_CHUNK_SIZE, TAG_SIZE, FileKey
 
 
 class AgeWriter(io.BufferedIOBase):
@@ -30,10 +30,13 @@ class AgeWriter(io.BufferedIOBase):
         *,
         recipients: Iterable[Recipient],
     ) -> None:
+        self.name = file  # To adhere to the WrappedBuffer protocol
+
         if isinstance(file, (Path, str)):
             self._stream_passed = False
             """False if the underlying stream was not passed as a file object,
             but as a path"""
+
             # pylint: disable=consider-using-with
             file = open(file, "wb")
         else:
@@ -142,16 +145,14 @@ class AgePayload(io.BufferedIOBase):
         self._chacha = chacha
 
         self._chunks_committed_so_far = 0
-        # The chunks of the file starting from the `_chunks_commited_so_far`th one.
         self._chunks: list[Chunk] = [Chunk(DATA_CHUNK_SIZE)]
+        """The chunks of the file starting from the `_chunks_commited_so_far`th one"""
 
-        # The current position in the file,
-        # i.e. where stuff will be written to next
         self._pos = 0
+        """The current position in the file, i.e. where stuff will be written to next"""
 
-        # The maximum size of the file,
-        # i.e. the furthest position reached by seeks or writes so far
         self._size = 0
+        """The maximum size of the file so far, i.e. the furthest position reached by seeks or writes"""
 
     def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
         if self.closed:

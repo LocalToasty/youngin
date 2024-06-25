@@ -138,8 +138,18 @@ class AgePayload(io.BufferedIOBase):
         self._chacha = chacha
 
         self._chunks_committed_so_far = 0
+        # The chunks of the file starting from the `_chunks_commited_so_far`th one.
+        # If the underlying stream is seekable,
+        # fully-written in-between chunks may be flushed.
+        # In that case, that chunk is `None`
         self._chunks: list[Chunk | None] = [Chunk(DATA_CHUNK_SIZE)]
+
+        # The current position in the file,
+        # i.e. where stuff will be written to next
         self._pos = 0
+
+        # The maximum size of the file,
+        # i.e. the furthest position reached by seeks or writes so far
         self._size = 0
 
     def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
@@ -269,43 +279,50 @@ class AgePayload(io.BufferedIOBase):
         assert current_chunk is not None
         current_chunk.write(pos_in_chunk, data=buffer)
 
-        if current_chunk.full and len(self._chunks) > 1:
-            if self._pos // DATA_CHUNK_SIZE == 0:
+        # TODO make more efficient
+        # Currently we're just writing full chunks left-to-right
+        while len(self._chunks) > 1:
+            chunk = self._chunks[0]
+            if chunk.full:
                 writeall(
                     self._fileobj,
                     self._chacha.encrypt(
                         nonce=_nonce(self._chunks_committed_so_far, last=False),
-                        data=bytes(current_chunk),
+                        data=bytes(chunk),
                         associated_data=b"",
                     ),
                 )
-                self._chunks = self._chunks[1:]
                 self._chunks_committed_so_far += 1
+                self._chunks = self._chunks[1:]
+            else:
+                # We've encountered the first none-full chunk, so let's stop for now
+                break
 
-            elif (
-                self._fileobj.seekable()
-                and (self._pos // DATA_CHUNK_SIZE)
-                < self._chunks_committed_so_far + len(self._chunks) - 1
-            ):
-                assert isinstance(self._raw_offset, int)
-                self._fileobj.seek(
-                    (self._pos // DATA_CHUNK_SIZE) * (DATA_CHUNK_SIZE + TAG_SIZE)
-                    + self._raw_offset,
-                    os.SEEK_SET,
-                )
-                writeall(
-                    self._fileobj,
-                    self._chacha.encrypt(
-                        nonce=_nonce(self._chunks_committed_so_far, last=False),
-                        data=bytes(current_chunk),
-                        associated_data=b"",
-                    ),
-                )
-                self._chunks[
-                    self._pos // DATA_CHUNK_SIZE - self._chunks_committed_so_far
-                ] = None
+            # elif self._fileobj.seekable() and (
+            #     self._pos // DATA_CHUNK_SIZE
+            #     < self._chunks_committed_so_far + len(self._chunks) - 1
+            # ):
+            #     assert isinstance(self._raw_offset, int)
+            #     self._fileobj.seek(
+            #         (self._pos // DATA_CHUNK_SIZE) * (DATA_CHUNK_SIZE + TAG_SIZE)
+            #         + self._raw_offset,
+            #         os.SEEK_SET,
+            #     )
+            #     writeall(
+            #         self._fileobj,
+            #         self._chacha.encrypt(
+            #             nonce=_nonce(self._chunks_committed_so_far, last=False),
+            #             data=bytes(current_chunk),
+            #             associated_data=b"",
+            #         ),
+            #     )
+            #     self._chunks[
+            #         self._pos // DATA_CHUNK_SIZE - self._chunks_committed_so_far
+            #     ] = None
 
         if len(buffer) == space_left_in_chunk:
+            # We've reached the end of this chunk,
+            # time to append a new one!
             self._chunks.append(Chunk(DATA_CHUNK_SIZE))
         self._pos += len(buffer)
         self._size = max(self._size, self._pos)
@@ -339,7 +356,7 @@ class Chunk:
         """Extents making up this chunk.
         
         It has to maintain the following invariants:
-          1. The sum of the extents' lenghts has to be `size`.
+          1. The sum of the extents' lengths has to be `size`.
           2. No two consecutive chunks may be of the same type.
         """
 

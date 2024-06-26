@@ -35,7 +35,7 @@ class AgeWriter(io.BufferedIOBase):
         if isinstance(file, (Path, str)):
             self._stream_passed = False
             """False if the underlying stream was not passed as a file object,
-            but as a path"""
+            but as a path."""
 
             # pylint: disable=consider-using-with
             file = open(file, "wb")
@@ -126,19 +126,26 @@ class AgeWriter(io.BufferedIOBase):
 class AgePayload(io.BufferedIOBase):
     """Helper class for writing age files.
 
-    Since we may not reuse nonces, we have to data until a full chunk (64KiB)
-    has been written.  This class waits for chunks to be completely written
-    before writing them into the underlying stream.  If the underlying stream is
-    not seekable, it furthermore buffers complete chunks until all previous
-    chunks have been written.
+    Since we may not reuse nonces, we have to store data until a full chunk
+    (64KiB) has been written.  This class waits for chunks to be completely
+    written before writing them into the underlying stream.  If the underlying
+    stream is not seekable, it furthermore buffers complete chunks until all
+    previous chunks have been written.
     """
 
     def __init__(self, file: io.IOBase, chacha: ChaCha20Poly1305) -> None:
-
-        # `None` because `detach()` unsets `_fileobj``
         self._fileobj: io.IOBase | None = file
+        """The file object to eventually write the encrypted data to
+
+        If the file is detached, it becomes `None`.
+        """
         if self._fileobj.seekable():
             self._raw_offset = self._fileobj.seek(0, os.SEEK_CUR)
+            """The offset at which the encrypted ChaCha20 chunks start.
+
+            These should be directly after the file's age header.
+            If the underlying file is not seekable, this is `None`
+            """
         else:
             self._raw_offset = None
 
@@ -152,7 +159,8 @@ class AgePayload(io.BufferedIOBase):
         """The current position in the file, i.e. where stuff will be written to next"""
 
         self._size = 0
-        """The maximum size of the file so far, i.e. the furthest position reached by seeks or writes"""
+        """The maximum size of the file so far, i.e. the furthest position
+        reached by seeks or writes"""
 
     def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
         if self.closed:
@@ -205,9 +213,10 @@ class AgePayload(io.BufferedIOBase):
             raise ValueError("I/O operation on closed or detached file.")
         if self._fileobj.seekable():
             # Rewind to first unwritten chunk
-            assert (
-                self._raw_offset is not None
-            ), "`_raw_offset` should have been set in the constructor if the underlying stream is seekable"
+            assert self._raw_offset is not None, (
+                "`_raw_offset` should have been set in the constructor "
+                "if the underlying stream is seekable."
+            )
             self._fileobj.seek(
                 self._raw_offset
                 + (DATA_CHUNK_SIZE + TAG_SIZE) * self._chunks_committed_so_far,
@@ -240,6 +249,7 @@ class AgePayload(io.BufferedIOBase):
         return raw
 
     def seekable(self) -> bool:
+        # We can always seek to not-yet-committed chunks
         return True
 
     def tell(self) -> int:
@@ -294,7 +304,7 @@ class AgePayload(io.BufferedIOBase):
         """Commits all already fully written chunks from on the left end of the file"""
 
         assert (
-            self._fileobj != None
+            self._fileobj is not None
         ), "the caller must ensure that the stream has not been detached"
 
         while len(self._chunks) > 1:
@@ -339,7 +349,7 @@ class Chunk:
     def __init__(self, size: int) -> None:
         self._extents: list[Data | Zeros] = [Zeros(size)]
         """Extents making up this chunk.
-        
+
         It has to maintain the following invariants:
           1. The sum of the extents' lengths has to be `size`.
           2. No two consecutive chunks may be of the same type.

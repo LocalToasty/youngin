@@ -4,6 +4,7 @@ import io
 import os
 from collections.abc import Iterable
 from pathlib import Path
+from typing import cast
 
 from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives import hashes, hmac
@@ -89,6 +90,7 @@ class AgeReader(io.BufferedIOBase):
         self._buf = b""
         self._next_encrypted_chunk = b""
         self._eof = False
+        """`True` if we have reached the end of the file"""
 
         if self._fileobj.seekable():
             self._payload_start = self._fileobj.tell()
@@ -117,15 +119,15 @@ class AgeReader(io.BufferedIOBase):
         self._fileobj = None
 
     @property
-    def closed(self):
+    def closed(self) -> bool:
         """Returns `True` if the stream has been closed."""
         return self._fileobj is None or self._fileobj.closed
 
     def seekable(self) -> bool:
         if self.closed:
             raise ValueError("I/O operation on closed file.")
-        assert self._fileobj is not None
-        return self._fileobj.seekable()
+        # assert self._fileobj is not None
+        return cast(io.IOBase, self._fileobj).seekable()
 
     def seek(self, offset: int, whence: int = 0) -> int:
         if self.closed:
@@ -135,24 +137,24 @@ class AgeReader(io.BufferedIOBase):
         match whence:
             case os.SEEK_SET:
                 # Seek from start of file
-                target_counter = offset // DATA_CHUNK_SIZE
+                target_chunk_no = offset // DATA_CHUNK_SIZE
                 target_off = offset % DATA_CHUNK_SIZE
             case os.SEEK_CUR:
                 # Seek from current position
-                target_counter = self._counter + offset // DATA_CHUNK_SIZE
+                target_chunk_no = self._counter + offset // DATA_CHUNK_SIZE
                 target_off = (self._off + offset) % DATA_CHUNK_SIZE
             case os.SEEK_END:
                 # Seek from end of file
-                target_counter = (self._cleartext_len + offset) // DATA_CHUNK_SIZE
+                target_chunk_no = (self._cleartext_len + offset) // DATA_CHUNK_SIZE
                 target_off = (self._cleartext_len + offset) % DATA_CHUNK_SIZE
             case _:
                 raise NotImplementedError()
 
         self._fileobj.seek(
-            pos := self._payload_start + target_counter * ENCRYPTED_CHUNK_SIZE
+            pos := self._payload_start + target_chunk_no * ENCRYPTED_CHUNK_SIZE
         )
         self._next_encrypted_chunk, self._buf, self._off = b"", b"", 0
-        self._counter = target_counter
+        self._counter = target_chunk_no
 
         self._eof = pos >= self._file_len
         if self._eof and self._counter == 0:
@@ -164,7 +166,7 @@ class AgeReader(io.BufferedIOBase):
 
         # DON'T USE ANY NON-LOCAL OBJECT STATE HERE,
         # self.read MAY HAVE CHANGED IT
-        return target_counter * DATA_CHUNK_SIZE + target_off
+        return target_chunk_no * DATA_CHUNK_SIZE + target_off
 
     def read1(self, size: int = -1) -> bytes:
         if self.closed:

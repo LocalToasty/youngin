@@ -13,5 +13,6 @@ from .identity import (
     X25519Identity,
     X25519Recipient,
 )
+from .open import open
 from .reader import AgeReader
 from .writer import AgeWriter
